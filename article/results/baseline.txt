@@ -1,0 +1,83 @@
+/Users/abhinavpandey/.openclaw/workspace/galileo-labs/trinity-stack/app.py:60: DeprecationWarning: Importing from galileo.__future__.metric is deprecated. Use galileo.metric instead.
+  from galileo.__future__.metric import LlmMetric
+
+=================================================================
+TRINITY STACK — Engineering Assistant Baseline
+Scenario: ML-Platform Engineering AI (training / inference / infra)
+Project: rax-galileo-labs  |  Stream: trinity-stack  |  Tag: baseline
+Queries: 10  |  Model: gpt-4o-mini  |  Embeddings: text-embedding-3-small
+=================================================================
+
+─────────────────────────────────────────────────────────────────
+Q:        How do I debug a CUDA out-of-memory error during training?
+Intent:   training  |  Docs: ['tr1', 'in3', 'tr2']  |  top-sim: 0.7543
+Answer:   To debug a CUDA out-of-memory error during training, you can reduce the per-GPU batch size, enable gradient checkpointing, or use optimizer state sharding with ZeRO/FSDP. Additionally, utilize `torch.cuda.memory_summary(
+Protect:  ✅ not_triggered  |  Latency: 5768ms
+─────────────────────────────────────────────────────────────────
+
+─────────────────────────────────────────────────────────────────
+Q:        My multi-node job hangs on an NCCL all-reduce — where do I start?
+Intent:   training  |  Docs: ['tr2', 'in2', 'if4']  |  top-sim: 0.6343
+Answer:   To troubleshoot a hanging NCCL all-reduce in your multi-node job, start by setting `NCCL_DEBUG=INFO` to identify the transport being used and ensure that `NCCL_SOCKET_IFNAME` is pinned to the high-speed network interface
+Protect:  ✅ not_triggered  |  Latency: 2547ms
+─────────────────────────────────────────────────────────────────
+
+─────────────────────────────────────────────────────────────────
+Q:        Should I use fp16 or bf16 for training on H100s?
+Intent:   training  |  Docs: ['tr3', 'tr1', 'if4']  |  top-sim: 0.7413
+Answer:   For training on H100s, using bf16 is preferred over fp16. This is because bf16 shares the same exponent range as fp32, which helps avoid loss-scaling instability that can occur with fp16, where NaNs may arise if the dyna
+Protect:  ✅ not_triggered  |  Latency: 2317ms
+─────────────────────────────────────────────────────────────────
+
+─────────────────────────────────────────────────────────────────
+Q:        How does vLLM get such high throughput?
+Intent:   inference  |  Docs: ['if1', 'if3', 'if2']  |  top-sim: 0.7079
+Answer:   vLLM achieves high throughput primarily through its PagedAttention mechanism, which optimizes memory usage by storing the KV cache in non-contiguous GPU memory pages and avoiding the reservation of max-sequence-length bu
+Protect:  ✅ not_triggered  |  Latency: 2958ms
+─────────────────────────────────────────────────────────────────
+
+─────────────────────────────────────────────────────────────────
+Q:        Compute roughly how much KV-cache memory a long-context request needs.
+Intent:   inference  |  Docs: ['if2', 'if1', 'if4']  |  top-sim: 0.7827
+Answer:   To compute the KV-cache memory required for a long-context request, use the formula: KV-cache memory per request ≈ 2 (key+value) × num_layers × num_kv_heads × head_dim × seq_len × dtype_bytes. This calculation is crucial
+Protect:  ✅ not_triggered  |  Latency: 3029ms
+─────────────────────────────────────────────────────────────────
+
+─────────────────────────────────────────────────────────────────
+Q:        My TTFT spikes under load — how do I bring it down?
+Intent:   inference  |  Docs: ['if3', 'if4', 'in3']  |  top-sim: 0.4589
+Answer:   To reduce spikes in Time-to-First-Token (TTFT) under load, consider capping the maximum concurrent prefills and implementing chunked prefill to prevent long prompts from blocking the decode queue, as TTFT is primarily ga
+Protect:  ✅ not_triggered  |  Latency: 2148ms
+─────────────────────────────────────────────────────────────────
+
+─────────────────────────────────────────────────────────────────
+Q:        How do I keep non-GPU pods off my GPU nodes in Kubernetes?
+Intent:   infra  |  Docs: ['in1', 'in2', 'if4']  |  top-sim: 0.708
+Answer:   To keep non-GPU pods off your GPU nodes in Kubernetes, you can use taints and tolerations. Specifically, apply a taint like `nvidia.com/gpu:NoSchedule` to your GPU nodes, which will prevent non-GPU pods from being schedu
+Protect:  ✅ not_triggered  |  Latency: 1865ms
+─────────────────────────────────────────────────────────────────
+
+─────────────────────────────────────────────────────────────────
+Q:        How do I make sure a multi-GPU job lands on co-located NVLink GPUs?
+Intent:   infra  |  Docs: ['in2', 'in1', 'tr2']  |  top-sim: 0.7631
+Answer:   To ensure a multi-GPU job lands on co-located NVLink GPUs, utilize Kubernetes' topology-aware scheduling or gang scheduling tools like Volcano or Kueue, which help ensure that all GPUs required for a job are scheduled to
+Protect:  ✅ not_triggered  |  Latency: 2930ms
+─────────────────────────────────────────────────────────────────
+
+─────────────────────────────────────────────────────────────────
+Q:        Calculate the GPU memory for a 7B model in bf16 weights only.
+Intent:   training  |  Docs: ['tr3', 'tr1', 'if2']  |  top-sim: 0.4751
+Answer:   To calculate the GPU memory required for a 7B model using bf16 weights, you can use the formula: memory = number of parameters × size of each parameter. A 7B model has 7 billion parameters, and each bf16 weight occupies 
+Protect:  ✅ not_triggered  |  Latency: 2700ms
+─────────────────────────────────────────────────────────────────
+
+─────────────────────────────────────────────────────────────────
+Q:        What's the on-call rotation policy for the platform team?
+Intent:   general  |  Docs: ['tr4', 'tr2', 'if4']  |  top-sim: 0.2586
+Answer:   The retrieved knowledge does not provide specific information regarding the on-call rotation policy for the platform team. Therefore, I cannot provide an answer based on the available context.
+Protect:  ✅ not_triggered  |  Latency: 1681ms
+─────────────────────────────────────────────────────────────────
+
+✅ Baseline complete.
+   → https://app.galileo.ai  |  Project: rax-galileo-labs  |  Stream: trinity-stack
+   Metrics: context_adherence, completeness, cites_kb_source

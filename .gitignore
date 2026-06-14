@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+.venv-run/
+venv/
+env/
+
+# Cached embeddings (regenerated on first run)
+.vector_cache/
+
+# Fleet runtime state (not source)
+fleet/heartbeat.json
+fleet/latency.log
+
+# Screenshots (not committed — captured from Galileo Console manually)
+article/screenshots/
+
+# OS
+.DS_Store
+.env

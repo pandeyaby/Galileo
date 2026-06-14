@@ -1,0 +1,57 @@
+[
+  {
+    "id": "tr1",
+    "category": "training",
+    "content": "A CUDA out-of-memory error during training is most often fixed by reducing per-GPU batch size, enabling gradient checkpointing (activation recomputation), or sharding optimizer state with ZeRO/FSDP. Use `torch.cuda.memory_summary()` to find the largest allocations; fragmentation can be mitigated with PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True."
+  },
+  {
+    "id": "tr2",
+    "category": "training",
+    "content": "NCCL collective hangs in multi-node training usually trace to a network/interface mismatch. Set NCCL_DEBUG=INFO to surface the chosen transport, pin NCCL_SOCKET_IFNAME to the high-speed interface, and confirm all ranks call the same collective in the same order. A single rank that diverges (e.g. an uneven data shard) will deadlock the whole job."
+  },
+  {
+    "id": "tr3",
+    "category": "training",
+    "content": "Mixed-precision training with bf16 is preferred over fp16 on A100/H100 because bf16 has the same exponent range as fp32 and avoids loss-scaling instability. fp16 requires a dynamic loss scaler; NaNs after a few steps usually mean the scaler collapsed or a layer needs to stay in fp32 (e.g. softmax/layernorm)."
+  },
+  {
+    "id": "tr4",
+    "category": "training",
+    "content": "Checkpoint frequently to object storage and keep the last N plus periodic permanent snapshots. For large models, use sharded/distributed checkpointing (each rank writes its shard) to avoid a single-rank gather bottleneck. Always store the optimizer state and RNG state alongside weights so a resumed run is bitwise-reproducible."
+  },
+  {
+    "id": "if1",
+    "category": "inference",
+    "content": "vLLM achieves high throughput via PagedAttention, which stores the KV cache in non-contiguous GPU memory pages and avoids reserving max-sequence-length buffers per request. Continuous batching lets new requests join in-flight batches at token boundaries, keeping GPUs saturated under variable load."
+  },
+  {
+    "id": "if2",
+    "category": "inference",
+    "content": "KV-cache memory per request \u2248 2 (key+value) \u00d7 num_layers \u00d7 num_kv_heads \u00d7 head_dim \u00d7 seq_len \u00d7 dtype_bytes. For long-context serving this dominates GPU memory. Reduce it with grouped-query attention (fewer KV heads), KV-cache quantization (fp8/int8), or paged/streaming eviction of old tokens."
+  },
+  {
+    "id": "if3",
+    "category": "inference",
+    "content": "Time-to-first-token (TTFT) is gated by the prefill (prompt) pass; inter-token latency is gated by the decode loop. To cut TTFT under load, cap max concurrent prefills and use chunked prefill so long prompts don't block the decode queue. Speculative decoding raises throughput when a small draft model agrees with the target most of the time."
+  },
+  {
+    "id": "if4",
+    "category": "inference",
+    "content": "Autoscale inference replicas on a queue/latency signal (e.g. requests-waiting or p95 TTFT), not raw GPU utilization, because a GPU can read 100% busy while latency is still healthy. Keep a warm pool to absorb the cold-start cost of loading large weights, which can take tens of seconds."
+  },
+  {
+    "id": "in1",
+    "category": "infra",
+    "content": "On Kubernetes, GPUs are exposed via the NVIDIA device plugin and requested as the extended resource nvidia.com/gpu. Pods without a GPU request can still be scheduled onto GPU nodes, so use taints/tolerations (e.g. nvidia.com/gpu:NoSchedule) plus node affinity to keep non-GPU workloads off expensive nodes."
+  },
+  {
+    "id": "in2",
+    "category": "infra",
+    "content": "For multi-GPU jobs, topology matters: GPUs on the same NVLink/NVSwitch domain communicate far faster than across PCIe or across nodes. Use the Kubernetes topology-aware scheduling / gang scheduling (e.g. Volcano, Kueue) so all-or-nothing jobs get all their GPUs co-located, and verify placement with `nvidia-smi topo -m`."
+  },
+  {
+    "id": "in3",
+    "category": "infra",
+    "content": "GPU node health: a falling SM clock or rising ECC error count is an early sign of a degrading device. Run DCGM (dcgm-exporter) to scrape per-GPU metrics into Prometheus, alert on XID errors in dmesg, and cordon+drain a node automatically when uncorrectable ECC errors appear, since a silent bad GPU corrupts training."
+  }
+]

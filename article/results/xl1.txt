@@ -1,0 +1,114 @@
+/Users/abhinavpandey/.openclaw/workspace/galileo-labs/trinity-stack/drills/xl1_process_dead.py:43: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+  age_s = (datetime.datetime.utcnow() - ts).total_seconds()
+/Users/abhinavpandey/.openclaw/workspace/galileo-labs/trinity-stack/drills/xl1_process_dead.py:58: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+  return (datetime.datetime.utcnow() - ts).total_seconds()
+/Users/abhinavpandey/.openclaw/workspace/galileo-labs/trinity-stack/drills/xl1_process_dead.py:83: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+  drill_start_ts = datetime.datetime.utcnow()
+/Users/abhinavpandey/.openclaw/workspace/galileo-labs/trinity-stack/drills/xl1_process_dead.py:102: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+  kill_ts = datetime.datetime.utcnow()
+/Users/abhinavpandey/.openclaw/workspace/galileo-labs/trinity-stack/drills/xl1_process_dead.py:175: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+  Recovered at:  {datetime.datetime.utcnow().isoformat()} UTC
+
+🔬 XL-1 DRILL: Kill the Agent Process
+   Failure mode FM-50 — trinity-stack lab
+   Labs project: rax-galileo-labs | Log stream: trinity-stack
+
+============================================================
+  STEP 1 — Verify baseline
+============================================================
+Fleet status: OK
+Fleet status after refresh: OK
+Heartbeat age: infs
+
+📊 Galileo baseline: check https://app.galileo.ai
+   Project: rax-galileo-labs | Log stream: trinity-stack
+   You should see traces from the baseline run.
+
+Drill start time (UTC): 2026-06-14T21:29:29.452373
+
+============================================================
+  STEP 2 — INJECT: Simulating process kill
+============================================================
+Action: Deleting heartbeat.json (simulates agent process dying).
+        No new traces will be sent to Galileo (no more app.invoke calls).
+
+✂️  Deleted heartbeat.json
+Process killed at (UTC): 2026-06-14T21:29:29.452477
+
+============================================================
+  STEP 3 — OBSERVE: Fleet alarm fires
+============================================================
+(In real ClawTrace: sub-ms telemetry immediately detects process down)
+(In our simulation: fleet monitor checks heartbeat file)
+
+Fleet status: ALARM:MISSING
+Expected ALARM:MISSING — ✅ CONFIRMED
+
+============================================================
+  STEP 4 — OBSERVE: Galileo shows trace silence
+============================================================
+Since we killed the process, NO new traces are being sent.
+
+What you see in Galileo Console:
+  • Last trace timestamp ≈ drill start time (no new entries)
+  • Trace count stops incrementing
+  • NO error or anomaly metric fires (there's nothing TO evaluate)
+
+Drill start UTC:   2026-06-14T21:29:29.452373
+Process kill UTC:  2026-06-14T21:29:29.452477
+
+⚠️  KEY INSIGHT:
+   Silence in Galileo does NOT mean a logging/SDK bug.
+   Silence + fleet alarm = RUN-layer outage.
+   Always check fleet health FIRST when traces stop.
+
+Triage decision table entry (for runbook RB-110):
+  Traces stop suddenly + fleet heartbeat stale/missing
+  → Root cause: RUN layer (process dead / unreachable)
+  → Fix: restart process, verify heartbeat resumes, then check traces
+
+============================================================
+  STEP 5 — RECOVER: Restart the agent process
+============================================================
+Recovering by running one query (simulates process restart)...
+✅ Process restarted successfully.
+eral  |  Docs: ['if3', 'if2', 'in2']  |  top-sim: 0.2886
+Answer:   The Trinity Stack is not mentioned in the provided knowledge sources, so I cannot provide a definition or details about it. If you have specific aspects or components of the Trinity Stack in mind, please provide more con
+Protect:  ✅ not_triggered  |  Latency: 2526ms
+─────────────────────────────────────────────────────────────────
+
+============================================================
+  STEP 6 — VERIFY: Both layers healthy again
+============================================================
+Fleet status: OK
+Heartbeat age: infs
+
+Fleet restored: ✅ YES
+Galileo: new trace should appear after 2026-06-14T21:29:29.452477
+         Check Console → filter by time > kill timestamp
+
+============================================================
+  XL-1 DRILL SUMMARY
+============================================================
+
+Failure mode:  FM-50 (XL-1) — Agent process dead
+Injected at:   2026-06-14T21:29:29.452477 UTC
+Recovered at:  2026-06-14T21:29:37.282847 UTC
+
+Observation (FLEET layer):
+  • Fleet monitor: ALARM:MISSING (ALARM immediately on heartbeat delete)
+  • What ClawTrace would show: process heartbeat drop, latency ∞
+
+Observation (TRUST layer — Galileo):
+  • Traces stopped at drill start time
+  • No quality metric anomaly (nothing to evaluate)
+  • Silence ≠ SDK bug; silence + fleet alarm = RUN-layer problem
+
+Triage rule: "Trace silence + fleet alarm → RUN layer first"
+
+Recovery:
+  • Restart process → heartbeat resumes → traces resume
+  • No Galileo-side action needed (no bad evals to fix)
+
+Runbook: runbooks/RB-110-agent-process-dead.md
+

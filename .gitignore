@@ -27,3 +27,4 @@ article/screenshots/
 # OS
 .DS_Store
 .env
+article/

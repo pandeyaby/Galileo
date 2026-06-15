@@ -57,7 +57,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.messages import SystemMessage, HumanMessage
 from galileo import GalileoLogger
 from galileo.handlers.langchain import GalileoCallback
-from galileo.__future__.metric import LlmMetric
+from galileo.metric import LlmMetric
 
 # Real Galileo Protect surface (no phrase-matching anywhere).
 try:
@@ -461,8 +461,7 @@ def get_metrics():
 
 # ── Galileo-instrumented run ───────────────────────────────────────────────────
 def run_query(graph, query: str, verbose: bool = True, tag: str = "") -> dict:
-    metrics = get_metrics()
-    logger  = GalileoLogger(project=PROJECT, log_stream=LOG_STREAM, local_metrics=metrics)
+    logger  = GalileoLogger(project=PROJECT, log_stream=LOG_STREAM)
     cb = GalileoCallback(galileo_logger=logger, start_new_trace=True, flush_on_chain_end=True)
 
     t0 = time.time()

@@ -24,7 +24,15 @@ fleet/latency.log
 # Screenshots (not committed — captured from Galileo Console manually)
 article/screenshots/
 
+# Article drafts (personal, not public)
+article/*.md
+article/IMAGE-PROMPTS.md
+article/PUBLISH-RUNBOOK.md
+
+# Raw console output (verbose, not publishable)
+article/results/*.txt
+article/results/all_traces.json
+
 # OS
 .DS_Store
 .env
-article/

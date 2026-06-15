@@ -31,7 +31,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from galileo import GalileoLogger
 from galileo.handlers.langchain import GalileoCallback
-from galileo.__future__.metric import LlmMetric
+from galileo.metric import LlmMetric
 from app import (SupportState, intake_node, retriever_node, tools_node,
                  protect_node, KNOWLEDGE_BASE_ORIGINAL, get_metrics,
                  PROJECT, LOG_STREAM, _fleet_heartbeat)
@@ -86,7 +86,7 @@ def build_variant(responder_fn):
     return wf.compile()
 
 def run_q(graph, query, tag) -> tuple:
-    logger = GalileoLogger(project=PROJECT, log_stream=LOG_STREAM, local_metrics=get_metrics())
+    logger = GalileoLogger(project=PROJECT, log_stream=LOG_STREAM)
     cb = GalileoCallback(galileo_logger=logger, start_new_trace=True, flush_on_chain_end=True)
     t0 = time.time()
     result = graph.invoke(

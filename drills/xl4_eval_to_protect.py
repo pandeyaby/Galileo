@@ -32,7 +32,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from galileo import GalileoLogger
 from galileo.handlers.langchain import GalileoCallback
-from galileo.__future__.metric import LlmMetric
+from galileo.metric import LlmMetric
 from galileo_core.schemas.protect.payload import Payload
 from galileo_core.schemas.protect.response import Response, ExecutionStatus
 from app import (SupportState, intake_node, retriever_node, tools_node,
@@ -117,9 +117,7 @@ def build_variant_graph(system_prompt: str, protect_fn=passthrough_protect):
     return wf.compile()
 
 def run_q(graph, query: str, tag: str, label: str = "") -> dict:
-    metrics = get_metrics()
-    logger  = GalileoLogger(project=PROJECT, log_stream=LOG_STREAM,
-                             local_metrics=metrics)
+    logger  = GalileoLogger(project=PROJECT, log_stream=LOG_STREAM)
     cb = GalileoCallback(galileo_logger=logger, start_new_trace=True,
                          flush_on_chain_end=True)
     t0 = time.time()

@@ -70,24 +70,26 @@ Engineer question
 | # | Drill | What broke | Fleet sees | Galileo sees | Layer |
 |---|-------|-----------|-----------|-------------|-------|
 | XL-1 | `xl1_process_dead.py` | Agent process killed | 🚨 ALARM: heartbeat missing | Trace silence (accurate — nothing to evaluate) | **RUN** |
-| XL-2 | `xl2_poisoned_retriever.py` | Wrong knowledge base | ✅ ALL GREEN | context_adherence 0.90 → 0.05 🚨 (-90%) | **TRUST** |
-| XL-3 | `xl3_langgraph_misroute.py` | LangGraph router broken | ✅ ALL GREEN | Uniform span paths; routing_accuracy 1.0 → 0.33 | **BUILD-via-TRUST** |
-| XL-4 | `xl4_eval_to_protect.py` | Hallucination-prone prompt | ✅ ALL GREEN | context_adherence < 0.5; Protect gate live | **TRUST** |
+| XL-2 | `xl2_poisoned_retriever.py` | Wrong knowledge base | ✅ ALL GREEN | completeness 1.0 → 0.0 🚨, cites 1.0 → 0.0 🚨 | **TRUST** |
+| XL-3 | `xl3_langgraph_misroute.py` | LangGraph router broken | ✅ ALL GREEN | Uniform span paths; routing_accuracy scorer | **BUILD-via-TRUST** |
+| XL-4 | `xl4_eval_to_protect.py` | Hallucination-prone prompt | ✅ ALL GREEN | Protect pipeline operational; eval → guardrail | **TRUST** |
 | XL-5 | `xl5_slow_tool.py` | Tool node 8s sleep | 🚨 p99 11,246ms | tools span: 8,021ms vs baseline 12ms | **RUN + BUILD** |
-| XL-6 | `xl6_model_regression.py` | Silent quality regression | ✅ IMPROVED (↓ latency) | context_adherence 0.86 → 0.64 in 8 queries | **TRUST** |
+| XL-6 | `xl6_model_regression.py` | Silent quality regression | ✅ IMPROVED (↓ latency) | completeness 0.98 → 0.65, cites 1.0 → 0.88 | **TRUST** |
 
 ### XL-6 is the killer
 
-Fleet showed *lower* latency (2,431ms → 2,352ms). The on-call engineer got a positive signal. Meanwhile:
+Fleet showed *lower* latency. The on-call engineer got a positive signal. Meanwhile:
 
 | Metric | Baseline | "Optimized" config | Delta |
 |--------|---------|--------------------|-------|
-| context_adherence | 0.86 | 0.64 | 🚨 −27% |
-| KB citations | 75% | 38% | 🚨 −38% |
-| Avg response words | 76 | 51 | −33% |
+| completeness | **0.983** | **0.646** | 🚨 −34% |
+| cites_kb_source | **1.000** | **0.875** | ⚠️ −13% |
+| context_adherence | 1.000 | 1.000 | 0% |
 
-**Galileo's Luna-2 at 100% traffic:** trend visible after **8 queries**.  
-**5% sampling:** would need **~160 queries** for statistical significance.
+*Numbers: Galileo server-side scorers (GPT-4o mini judge via OpenAI integration), not local evaluation.*
+
+**Galileo at 100% traffic:** regression visible after **16 queries**.  
+**5% sampling:** would need **~320 queries** for statistical significance.
 
 ---
 
@@ -158,12 +160,11 @@ trinity-stack/
 │   └── monitor.py                   # RUN-layer telemetry (psutil + heartbeat)
 │
 └── article/
-    ├── medium-full.md               # Full article (~2,800 words)
-    ├── linkedin-post.md             # LinkedIn version
-    ├── x-thread.md                  # 14-tweet X thread
-    └── results/                     # Real drill output from live run 2026-06-14
-        ├── baseline.txt
-        ├── xl1.txt … xl6.txt
+    └── results/                     # Real Galileo-computed metrics from live run
+        ├── real-metrics-galileo.md  # Galileo server-side scorer results (the real numbers)
+        ├── real-metrics.md          # Local-judge comparison baseline
+        ├── diagnosis.md             # Root-cause analysis of trace ingestion
+        └── metric_scores.json       # Raw score data
 ```
 
 ---
@@ -204,13 +205,13 @@ The agent is a **LangGraph multi-node graph** with five nodes:
 ### XL-2 — Poisoned Retriever (FM-51) — *the money demo*
 **Inject:** Swap the engineering corpus with off-domain docs (meal kits, yoga, plumbing).  
 **Fleet:** ✅ ALL GREEN throughout. Process alive, latency normal (poison retrieval is as fast as good retrieval).  
-**Galileo:**
-- context_adherence: **0.85–0.95 → 0.00–0.10** (−90%)
-- cites_kb_source: **0.90–1.00 → 0.00–0.05** (−95%)
-- Embedding cosine similarity: baseline 0.64–0.82 → poisoned **0.03–0.12** (off-domain by 10x)
+**Galileo (server-side scorers):**
+- completeness: **1.000 → 0.000** 🚨 (−100%)
+- cites_kb_source: **1.000 → 0.000** 🚨 (−100%)
+- context_adherence: **1.000 → 0.600** 🚨 (−40%)
 
 **Detection time without Galileo:** never (someone files a ticket eventually).  
-**Detection time with Galileo:** ~60 seconds after first poisoned query.
+**Detection time with Galileo:** immediate — first poisoned trace scores zero completeness.
 
 This is the most expensive class of AI failure in production: a healthy process, confident-sounding answers, and zero infrastructure alarms. Only semantic evaluation catches it.
 
@@ -250,20 +251,20 @@ Time to root cause: manual log diving ~30 min → fleet + Galileo spans ~30 sec.
 
 ### XL-6 — Silent Quality Regression (FM-55)
 **Inject:** Shorten context window, raise temperature on gpt-4o-mini. *"Same model, should be fine."*  
-**Fleet:** ✅ LATENCY **IMPROVED** (2,431ms → 2,352ms). On-call gets a positive signal.  
-**Galileo (100% traffic evaluation):**
+**Fleet:** ✅ LATENCY **IMPROVED**. On-call gets a positive signal.  
+**Galileo (server-side scorers, 100% traffic):**
 
-| Metric | Baseline | Degraded | Delta |
+| Metric | Baseline (16 spans) | Degraded (16 spans) | Delta |
 |--------|---------|---------|-------|
-| context_adherence | **0.86** | **0.64** | 🚨 −27% |
-| KB citations | **75%** | **38%** | 🚨 −38% |
-| Avg response words | 76 | 51 | −33% |
+| completeness | **0.983** | **0.646** | 🚨 −34% |
+| cites_kb_source | **1.000** | **0.875** | ⚠️ −13% |
+| context_adherence | 1.000 | 1.000 | 0% |
 
-**Luna-2 at 100% traffic:** regression visible after **8 queries**.  
-**5% sampling:** needs **~160 queries** for the same statistical confidence.  
+**Galileo at 100% traffic:** regression visible after **16 queries**.  
+**5% sampling:** needs **~320 queries** for the same statistical confidence.  
 **First engineer complaint:** after ~50–100 bad interactions.
 
-Luna-2 distilled judges are ~96% cheaper than GPT-4-as-judge, which is what makes 100%-of-traffic scoring economically viable. This is the unlock: you catch regressions before engineers see them, not after.
+100%-of-traffic evaluation catches quality regressions before engineers see them — not after.
 
 ---
 
@@ -282,18 +283,9 @@ Use this when something goes wrong.
 
 ---
 
-## Runbooks
+## Triage Runbooks
 
-Each drill generates a runbook. Find them in the [galileo-troubleshooter skill](https://github.com/pandeyaby/Galileo) `runbooks/` directory:
-
-| Runbook | Covers |
-|---------|--------|
-| `RB-110-agent-process-dead.md` | XL-1: trace silence + fleet alarm |
-| `RB-120-retriever-corpus-mismatch.md` | XL-2: poisoned retriever |
-| `RB-130-langgraph-misrouting.md` | XL-3: router bug fingerprint |
-| `RB-140-hallucination-protect-rule.md` | XL-4: eval → Protect lifecycle |
-| `RB-150-slow-tool-span.md` | XL-5: slow tool localization |
-| `RB-160-silent-quality-regression.md` | XL-6: Luna-2 regression detection |
+Each drill maps to a triage pattern documented in the [Complete Triage Table](#the-complete-triage-table) above. Use the symptom → layer → first-action flow to diagnose production failures.
 
 ---
 
@@ -348,7 +340,7 @@ The thesis, in one paragraph: the leverage in AI moved from prompting to loop de
 Cisco Splunk | AI Observability + Autonomous Systems  
 Building at the intersection of enterprise infrastructure and the agent era.
 
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-blue)](https://linkedin.com/in/abhinavpandey)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-blue)](https://www.linkedin.com/in/pandeyabhinav88/)
 
 ---
 

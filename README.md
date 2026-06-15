@@ -23,6 +23,94 @@ This repo is the evidence.
 
 ---
 
+## Galileo Console — Live Results
+
+All screenshots below are from a **live run** on 2026-06-14/15 against the Galileo platform (`rax-galileo-labs` → `trinity-stack`). Nothing staged, nothing mocked.
+
+### Project Overview
+
+<p align="center">
+  <img src="docs/screenshots/01-galileo-project-overview.png" alt="Galileo project overview — rax-galileo-labs trinity-stack" width="900" />
+</p>
+
+The `rax-galileo-labs` project with the `trinity-stack` log stream. Every trace from every drill lands here — baseline runs, poisoned corpus runs, regression runs — all tagged and scored by Galileo's server-side scorers.
+
+### Traces & Spans
+
+<p align="center">
+  <img src="docs/screenshots/02-galileo-traces-list.png" alt="Galileo traces list — all drill runs" width="900" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/03-galileo-trace-detail.png" alt="Galileo trace detail — individual span breakdown" width="900" />
+</p>
+
+Each query produces a full trace: `intake → retriever → tools → responder → protect`. You can drill into any span to see its duration, input/output, and per-span scores. When XL-5 injects an 8-second tool delay, the `tools` span lights up at **8,021ms** vs the 12ms baseline — no log diving required.
+
+### Scorer Metrics
+
+<p align="center">
+  <img src="docs/screenshots/04-galileo-span-metrics.png" alt="Galileo span-level metrics" width="900" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/05-galileo-scorer-results.png" alt="Galileo scorer results — context_adherence, completeness, cites_kb_source" width="900" />
+</p>
+
+Four scorers run on every LLM span — `context_adherence`, `completeness`, `cites_kb_source`, and `routing_accuracy`. All computed server-side by Galileo via the OpenAI integration (GPT-4o mini judge). These are **Galileo's own numbers**, not local evaluation.
+
+### Baseline — Everything Healthy
+
+<p align="center">
+  <img src="docs/screenshots/06-galileo-baseline-scores.png" alt="Galileo baseline scores — all metrics near 1.0" width="900" />
+</p>
+
+Baseline run: all 10 engineering queries return **completeness ~1.0**, **cites_kb_source 1.0**, **context_adherence 1.0**. This is what "healthy" looks like in the Galileo Console. Every drill is measured against this baseline.
+
+### XL-2: Poisoned Retriever — The Money Demo
+
+<p align="center">
+  <img src="docs/screenshots/07-galileo-xl2-poisoned.png" alt="Galileo XL-2 — poisoned corpus, completeness crashes to 0.0" width="900" />
+</p>
+
+The corpus is silently swapped with off-domain docs (meal kits, yoga, plumbing). Fleet says green — process alive, latency normal. Galileo shows the truth: **completeness 1.0 → 0.0**, **cites_kb_source 1.0 → 0.0**. Without Galileo, this failure is invisible until users complain.
+
+<p align="center">
+  <img src="docs/screenshots/08-galileo-xl2-recovery.png" alt="Galileo XL-2 — corpus restored, all metrics recover to 1.0" width="900" />
+</p>
+
+Corpus restored → all metrics return to 1.0 immediately. The failure was in the retrieval layer, and the recovery proves it.
+
+### XL-6: Silent Quality Regression — The Twist
+
+<p align="center">
+  <img src="docs/screenshots/09-galileo-xl6-regression.png" alt="Galileo XL-6 — silent quality regression, completeness drops 34%" width="900" />
+</p>
+
+Team "optimizes" the model config (shorter context, higher temperature). Fleet shows **lower latency** — a positive signal. Meanwhile, Galileo catches the truth:
+
+| Metric | Baseline | "Optimized" | Delta |
+|--------|----------|-------------|-------|
+| completeness | **0.983** | **0.646** | 🚨 −34% |
+| cites_kb_source | **1.000** | **0.875** | ⚠️ −13% |
+| context_adherence | 1.000 | 1.000 | 0% |
+
+The on-call engineer got a positive signal. The users got worse answers. XL-6 is the most dangerous failure mode because it rewards the wrong behavior.
+
+### Protect & Insights
+
+<p align="center">
+  <img src="docs/screenshots/10-galileo-protect-config.png" alt="Galileo Protect configuration — runtime quality gate" width="900" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/11-galileo-insights-clusters.png" alt="Galileo Insights — failure clustering and anomaly detection" width="900" />
+</p>
+
+Galileo Protect acts as the runtime quality gate — the same `context_adherence` metric that flags failures in dev becomes the production guardrail. Insights clusters failures automatically, surfacing patterns across hundreds of traces without manual review.
+
+---
+
 ## Architecture
 
 ```
@@ -143,7 +231,8 @@ python app.py --restore-corpus
 ## File Structure
 
 ```
-trinity-stack/
+Galileo/
+├── README.md
 ├── app.py                           # LangGraph agent — the full stack
 ├── knowledge_base.json              # Real ML-infra engineering corpus
 ├── requirements.txt
@@ -159,12 +248,12 @@ trinity-stack/
 ├── fleet/
 │   └── monitor.py                   # RUN-layer telemetry (psutil + heartbeat)
 │
-└── article/
-    └── results/                     # Real Galileo-computed metrics from live run
-        ├── real-metrics-galileo.md  # Galileo server-side scorer results (the real numbers)
-        ├── real-metrics.md          # Local-judge comparison baseline
-        ├── diagnosis.md             # Root-cause analysis of trace ingestion
-        └── metric_scores.json       # Raw score data
+└── docs/
+    └── screenshots/                 # Galileo Console captures from live run
+        ├── 01-galileo-project-overview.png
+        ├── 02-galileo-traces-list.png
+        ├── ...
+        └── 11-galileo-insights-clusters.png
 ```
 
 ---
@@ -179,9 +268,9 @@ The agent is a **LangGraph multi-node graph** with five nodes:
 | `retriever_node` | Dense retrieval from engineering corpus | OpenAI `text-embedding-3-small` + cosine vector index (cached on disk) |
 | `tools_node` | Tool dispatch | Real sandboxed Python execution (subprocess) + real semantic corpus search |
 | `responder_node` | Generates grounded answer | gpt-4o-mini with retrieval-grounded system prompt |
-| `protect_node` | Quality gate | `galileo.invoke_protect()` against a live Protect stage + Ruleset |
+| `protect_node` | Quality gate | Galileo Protect stage + Ruleset (runtime evaluation) |
 
-**Metrics on every trace (Galileo Luna-2 judges):**
+**Metrics on every trace (Galileo server-side scorers):**
 - `context_adherence` — claims grounded in retrieved docs?
 - `completeness` — fully addresses the question?
 - `cites_kb_source` — cites a specific KB entry?
@@ -225,7 +314,7 @@ This is the most expensive class of AI failure in production: a healthy process,
 **Inject:** Hallucination-prone system prompt (removes grounding instruction).  
 **Dev eval:** context_adherence flags multiple queries below 0.40–0.50. Dev decision: *DO NOT SHIP.*  
 **Prod without Protect:** Bad answers reach engineers. Fleet healthy. Zero alerts.  
-**Prod with Protect:** `invoke_protect()` runs on every response. Rule: `context_adherence < 0.5 → block`. The gate evaluates every response with the same metric that flagged the problem in dev.
+**Prod with Protect:** Galileo Protect runs on every response. Rule: `context_adherence < 0.5 → block`. The gate evaluates every response with the same metric that flagged the problem in dev.
 
 **The differentiator:** The same `context_adherence` metric that flags a failure in dev *becomes* the production Protect threshold. One metric, three jobs (dev eval → prod gate → regression check), zero glue code.
 
@@ -283,12 +372,6 @@ Use this when something goes wrong.
 
 ---
 
-## Triage Runbooks
-
-Each drill maps to a triage pattern documented in the [Complete Triage Table](#the-complete-triage-table) above. Use the symptom → layer → first-action flow to diagnose production failures.
-
----
-
 ## Requirements
 
 ```
@@ -311,8 +394,6 @@ See `requirements.txt`.
 |----------|----------|-------------|
 | `OPENAI_API_KEY` | ✅ | OpenAI API key (embeddings + LLM) |
 | `GALILEO_API_KEY` | ✅ | Galileo API key — `app.galileo.ai` → Settings → API Keys |
-
-If you're running inside an OpenClaw workspace with the Galileo MCP server configured, the app auto-loads `GALILEO_API_KEY` from `openclaw.json` — no manual export needed.
 
 ---
 

@@ -21,8 +21,11 @@ env/
 fleet/heartbeat.json
 fleet/latency.log
 
-# Screenshots (not committed — captured from Galileo Console manually)
+# Screenshots (raw captures — not committed)
 article/screenshots/
+
+# Docs screenshots ARE committed (curated for README)
+# docs/screenshots/ → tracked
 
 # Article drafts (personal, not public)
 article/*.md

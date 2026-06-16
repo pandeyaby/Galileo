@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1000" font-family="Inter, Helvetica, Arial, sans-serif">
+  <rect width="1200" height="1000" fill="#0a0a0f"/>
+  <text x="600" y="70" fill="#e0e0e0" font-size="36" font-weight="700" text-anchor="middle">The self-repairing harness</text>
+  <text x="600" y="108" fill="#888888" font-size="21" text-anchor="middle">One metric does three jobs. Every failure becomes a permanent check.</text>
+
+  <!-- ring guide -->
+  <circle cx="600" cy="560" r="300" fill="none" stroke="#1e1e2e" stroke-width="2" stroke-dasharray="6 8"/>
+
+  <!-- 4 nodes -->
+  <!-- top: eval -->
+  <rect x="430" y="200" width="340" height="120" rx="12" fill="#12121a" stroke="#3a3a5a" stroke-width="2"/>
+  <text x="600" y="248" fill="#88aaff" font-size="22" font-weight="700" text-anchor="middle">1 · EVAL (dev)</text>
+  <text x="600" y="282" fill="#e0e0e0" font-size="17" text-anchor="middle">Galileo scores context_adherence</text>
+  <text x="600" y="305" fill="#888888" font-size="15" text-anchor="middle">on the test set</text>
+
+  <!-- right: protect -->
+  <rect x="850" y="500" width="320" height="120" rx="12" fill="#12121a" stroke="#3a3a5a" stroke-width="2"/>
+  <text x="1010" y="548" fill="#f5a623" font-size="22" font-weight="700" text-anchor="middle">2 · GUARDRAIL (prod)</text>
+  <text x="1010" y="582" fill="#e0e0e0" font-size="17" text-anchor="middle">same metric → Protect rule</text>
+  <text x="1010" y="605" fill="#888888" font-size="15" text-anchor="middle">invoke_protect() at inference</text>
+
+  <!-- bottom: block -->
+  <rect x="430" y="800" width="340" height="120" rx="12" fill="#12121a" stroke="#3a3a5a" stroke-width="2"/>
+  <text x="600" y="848" fill="#ff6b6b" font-size="22" font-weight="700" text-anchor="middle">3 · BLOCK + ESCALATE</text>
+  <text x="600" y="882" fill="#e0e0e0" font-size="17" text-anchor="middle">low-adherence answer withheld</text>
+  <text x="600" y="905" fill="#888888" font-size="15" text-anchor="middle">routed to a human</text>
+
+  <!-- left: regression -->
+  <rect x="30" y="500" width="320" height="120" rx="12" fill="#12121a" stroke="#34a853" stroke-width="2"/>
+  <text x="190" y="548" fill="#34a853" font-size="22" font-weight="700" text-anchor="middle">4 · REGRESSION LOCK</text>
+  <text x="190" y="582" fill="#e0e0e0" font-size="17" text-anchor="middle">failure saved as a test</text>
+  <text x="190" y="605" fill="#888888" font-size="15" text-anchor="middle">can't happen twice</text>
+
+  <!-- arrows clockwise -->
+  <text x="830" y="400" fill="#888888" font-size="34">↘</text>
+  <text x="790" y="730" fill="#888888" font-size="34">↙</text>
+  <text x="360" y="730" fill="#888888" font-size="34">↖</text>
+  <text x="350" y="400" fill="#888888" font-size="34">↗</text>
+
+  <!-- center -->
+  <text x="600" y="545" fill="#e0e0e0" font-size="20" font-weight="700" text-anchor="middle">context_adherence</text>
+  <text x="600" y="575" fill="#888888" font-size="16" text-anchor="middle">one metric, three jobs</text>
+  <text x="600" y="605" fill="#34a853" font-size="15" text-anchor="middle">harder to break each cycle</text>
+
+  <text x="600" y="975" fill="#f5a623" font-size="19" font-weight="600" text-anchor="middle">No glue code between dev evals and the prod gate. That's the loop the whole industry is reaching for.</text>
+</svg>

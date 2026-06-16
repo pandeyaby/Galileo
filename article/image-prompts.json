@@ -1,0 +1,60 @@
+{
+  "_about": "Single source of truth for article imagery. Feed this whole file to the API script (gen-images.mjs) for hands-off batch generation, OR paste image-director-prompt.md into ChatGPT/Grok for the chat route. Every prompt below is 'story-style': one strong metaphor, no text inside the image (models can't spell), consistent visual world so the set reads as a series, not random clip art.",
+
+  "style_world": "A restrained editorial tech-illustration style, like a Stripe Press cover or a Wired feature. ONE coherent world across every image: deep slate-blue background (#0e1320), matte paper grain, soft volumetric light. A single warm accent of signal-amber (#f5a623) used sparingly for the thing that matters; a cool teal (#39d0c8) for 'healthy/measured'. Recurring motifs: the autonomous AGENT is a small calm luminous orb or minimalist robot; the GATE is a freestanding arch or threshold of light that things must pass through; DASHBOARDS are thin floating glass panels. Flat-vector shapes with subtle depth, gentle gradients, no harsh outlines. Cinematic but quiet. Generous negative space.",
+
+  "global_constraints": "GOAL: a non-technical reader must understand the point in 2 seconds WITHOUT reading the article. Use a clear before/after or side-by-side contrast and universally understood icons — green check = fine, red flag or X = problem, up/down arrow, speedometer, magnifying glass = inspection. The ONLY text allowed is the few BIG short labels named in each scene (1-2 words each, large, plain English, no jargon); no paragraphs, no logos, no watermarks, no UI clutter. If a label can't render cleanly, leave a clean empty band where it belongs. Landscape/wide, single clear focus, calm negative space for a title.",
+
+  "design_language": "RECURRING DEVICE across every explainer image so the reader learns it and Galileo is always the hero: ordinary monitoring/dashboards show everything GREEN and happy (the comforting lie), while the AI's actual ANSWER is wrong or degraded, and a single AMBER MAGNIFYING GLASS = Galileo is the one thing that spots the problem and raises the red flag. Green/teal = 'looks fine'. Amber = Galileo. Red = the caught problem. Keep the same friendly AI-robot character throughout.",
+
+  "defaults": { "size": "1536x1024", "quality": "high" },
+
+  "images": [
+    {
+      "id": "hero",
+      "filename": "hero-cover.png",
+      "mode": "editorial",
+      "use": "Article hero / social card. The single most important image.",
+      "prompt": "A long line of small identical luminous agent-orbs flows like a glowing river toward a single tall arch of warm amber light — a gate. Most orbs pass cleanly through and continue, calm and teal. A few are gently stopped at the arch, held in mid-air, dimmed. The gate is the only source of strong light in the scene; everything else is quiet deep slate. Wide cinematic composition, the gate slightly right of center, lots of dark sky above for a title. The feeling: one threshold decides what gets through."
+    },
+    {
+      "id": "three-layer-stack",
+      "filename": "three-layer-stack.png",
+      "mode": "editorial",
+      "use": "After 'What I Built'. Self-explanatory: three watchers look at the same AI; only Galileo checks the answer.",
+      "labels": ["Is it ON?", "Built right?", "Is the ANSWER right?"],
+      "prompt": "Instantly readable diagram: the SAME friendly AI robot on the right is watched by THREE screens stacked on the left, each with ONE big icon and a status badge. BOTTOM screen — a heartbeat pulse icon, green check (only knows the agent is running); small label 'Is it ON?'. MIDDLE screen — interlocking gears icon, green check (only knows the wiring is correct); label 'Built right?'. TOP screen, clearly the biggest and glowing amber (the hero) — a magnifying-glass-over-a-speech-bubble icon inspecting the robot's answer and raising a bright RED flag (the ONLY screen that checked whether the ANSWER is correct, and caught that it's wrong); label 'Is the ANSWER right?'. Visual hierarchy makes the amber top screen dominant. Flat editorial vector, deep slate background, teal for the two green screens, amber+red for the Galileo screen. Big simple icons, labels short and large."
+    },
+    {
+      "id": "poisoned-corpus",
+      "filename": "failure2-poisoned-corpus.png",
+      "mode": "editorial",
+      "use": "Failure 2 (XL-2). The 'confidently wrong' image — also a great standalone LinkedIn visual.",
+      "labels": ["Looks fine", "Wrong answer"],
+      "prompt": "Instantly readable cause-and-effect cartoon. A person on the left asks a question, drawn as a speech bubble holding ONE clear icon: a computer chip / GPU with a question mark. A confident smiling AI robot on the right answers with ITS OWN speech bubble holding an obviously unrelated icon: a plumbing pipe and wrench. The whole point is the absurd mismatch — a hardware question answered with plumbing. Small dashboard widgets around the robot all show green checkmarks (tiny label 'Looks fine'). A single amber magnifying glass (Galileo) hovers over the robot's wrong answer and raises a RED alert flag with the short label 'Wrong answer' — it is the only thing that noticed. Flat editorial vector, deep slate background, teal green-check widgets, amber+red for the Galileo catch. Big simple icons."
+    },
+    {
+      "id": "xl6-disguise",
+      "filename": "xl6-improvement-disguise.png",
+      "mode": "editorial",
+      "use": "Failure 6 (XL-6). The 'improvement was the disguise' image. Strongest concept in the piece.",
+      "labels": ["FASTER", "WORSE ANSWERS"],
+      "prompt": "Clear before/after, two side-by-side panels with a big divider. LEFT panel — a speedometer with its needle in the green 'fast' zone, a large green UP arrow and a thumbs-up; it screams a win; short label 'FASTER'. RIGHT panel — the SAME AI's actual answer moments later, drawn as a speech bubble (or a glass of liquid) that has shrunk from full to half and faded pale, with a red DOWN alert; short label 'WORSE ANSWERS'. A single amber magnifying glass (Galileo) sits on the RIGHT panel catching the quality drop that the speed gauge on the left completely missed. The contrast is the message: faster but worse, and only Galileo saw it. Flat editorial vector, deep slate background, teal/green for the 'win' side, amber+red for the caught regression. Big simple icons, short labels."
+    },
+    {
+      "id": "fire-vs-room",
+      "filename": "xl5-fire-vs-room.png",
+      "mode": "editorial",
+      "use": "Failure 5 (XL-5). 'Fleet says the building is on fire; Galileo shows you which room.'",
+      "prompt": "Two instruments reading the same event. On the left, a wide blunt alarm light floods a whole dark building silhouette in amber — 'somewhere in here is wrong', no precision. On the right, a fine beam of teal light reaches through a window and lands on exactly ONE room, pinpointing the source, while every other room reads calm and intact. Same building, two ways of seeing. The pinpoint beam is the hero. Editorial, architectural, restrained."
+    },
+    {
+      "id": "flywheel",
+      "filename": "eval-protect-regression-flywheel.png",
+      "mode": "editorial",
+      "use": "'Why Galileo Is the Gate'. The self-improving loop — one check does three jobs and gets stronger each cycle.",
+      "labels": ["MEASURE", "GUARD", "LOCK IN", "stronger each cycle"],
+      "prompt": "Simple, upbeat cycle diagram anyone can read. A bold circular arrow loop with THREE evenly spaced stations, each a big universally understood icon with a one-word label under it: (1) a magnifying glass — 'MEASURE'; (2) a shield — 'GUARD'; (3) a padlock — 'LOCK IN'. One bright amber thread flows around the loop in the arrow's direction through all three and back to the start. Beside the loop a small bar chart / strength meter is filling up, and a short note 'stronger each cycle' with the loop glowing a touch brighter — showing it improves every pass. Flat editorial vector, deep slate background, amber loop thread, teal icons, clean space under each icon for its label. Obvious direction, no clutter."
+    }
+  ]
+}

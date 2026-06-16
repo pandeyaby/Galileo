@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 900" font-family="Inter, Helvetica, Arial, sans-serif">
+  <rect width="1400" height="900" fill="#0a0a0f"/>
+  <text x="700" y="70" fill="#e0e0e0" font-size="38" font-weight="700" text-anchor="middle">A loop is only as good as its gate</text>
+  <text x="700" y="110" fill="#888888" font-size="22" text-anchor="middle">Three layers. Each answers a different question. Only one is the gate.</text>
+
+  <!-- BUILD -->
+  <rect x="200" y="170" width="1000" height="150" rx="12" fill="#12121a" stroke="#1e1e2e" stroke-width="2"/>
+  <text x="240" y="225" fill="#88aaff" font-size="26" font-weight="700">BUILD — LangGraph</text>
+  <text x="240" y="262" fill="#e0e0e0" font-size="20">"Did we construct it right?"</text>
+  <text x="240" y="295" fill="#888888" font-size="17">intake → retriever → tools → responder → protect</text>
+  <text x="1160" y="250" fill="#888888" font-size="34" text-anchor="end">👁</text>
+
+  <!-- RUN -->
+  <rect x="200" y="350" width="1000" height="150" rx="12" fill="#12121a" stroke="#1e1e2e" stroke-width="2"/>
+  <text x="240" y="405" fill="#f5a623" font-size="26" font-weight="700">RUN — fleet telemetry</text>
+  <text x="240" y="442" fill="#e0e0e0" font-size="20">"Is it running?"</text>
+  <text x="240" y="475" fill="#888888" font-size="17">process health · latency · error rate</text>
+  <text x="1160" y="430" fill="#555555" font-size="34" text-anchor="end">◑</text>
+  <text x="1010" y="475" fill="#555555" font-size="15" text-anchor="end">blind to quality</text>
+
+  <!-- TRUST (the gate, highlighted) -->
+  <rect x="180" y="530" width="1040" height="175" rx="14" fill="#12121a" stroke="#34a853" stroke-width="3"/>
+  <text x="240" y="588" fill="#34a853" font-size="26" font-weight="700">TRUST — Galileo  ·  THE GATE</text>
+  <text x="240" y="625" fill="#e0e0e0" font-size="20">"Is it right?"</text>
+  <text x="240" y="660" fill="#888888" font-size="17">context_adherence · completeness · cites · Protect guardrail</text>
+  <text x="240" y="688" fill="#888888" font-size="17">the only layer that can fail the work — maker ≠ checker</text>
+  <text x="1160" y="610" fill="#34a853" font-size="34" text-anchor="end">●</text>
+
+  <!-- request line -->
+  <text x="700" y="780" fill="#888888" font-size="19" text-anchor="middle">Of 6 injected failures, fleet caught 1. The gate caught all 6 —</text>
+  <text x="700" y="812" fill="#888888" font-size="19" text-anchor="middle">including the one where the dashboards showed <tspan fill="#34a853">improvement</tspan> while quality died.</text>
+</svg>

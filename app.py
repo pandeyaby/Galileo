@@ -59,7 +59,23 @@ from galileo import GalileoLogger
 from galileo.handlers.langchain import GalileoCallback
 from galileo.metric import LlmMetric
 
-# Real Galileo Protect surface (no phrase-matching anywhere).
+# ── Galileo 2.3.0 Agent Control bridge (new observability path) ───────────────
+# setup_agent_control_bridge() connects the GalileoLogger to the agent-control-sdk
+# so that control evaluation events flow into Galileo traces automatically.
+# This is the migration path FROM invoke_protect TOWARD full Agent Control.
+# For runtime guardrail enforcement (blocking), we still use invoke_protect in
+# this lab because a dedicated agent-control server is not provisioned here.
+# When an agent-control server IS available (see RB-140 §Fix - Current path),
+# replace invoke_protect with @agent_control.control() + ControlViolationError.
+try:
+    from galileo import setup_agent_control_bridge, GalileoAgentControlBridge
+    _AGENT_CONTROL_BRIDGE_AVAILABLE = True
+except ImportError:
+    _AGENT_CONTROL_BRIDGE_AVAILABLE = False
+    GalileoAgentControlBridge = None  # type: ignore
+
+# Real Galileo Protect surface (deprecated in 2.3.0, still functional).
+# Migration target: @agent_control.control() + ControlViolationError (see RB-140).
 try:
     from galileo import invoke_protect
     from galileo_core.schemas.protect.payload import Payload
@@ -205,6 +221,7 @@ class SupportState(TypedDict):
     final_answer:     Optional[str]
     protect_status:   Optional[str]    # triggered | not_triggered | skipped
     context_score:    Optional[float]  # real retrieval/judge score
+    protect_path:     Optional[str]    # invoke_protect | llm_judge_fallback (2026-06-16)
 
 # ── REAL tools (real execution — no hardcoded dicts, no fabricated IDs) ─────────
 def tool_run_python(code: str, timeout_s: int = 8) -> str:
@@ -356,9 +373,19 @@ def _judge_context_adherence(query: str, context: str, answer: str) -> float:
 def protect_node(state: SupportState) -> SupportState:
     """Gate the draft answer through a REAL Galileo Protect stage.
 
-    Primary path: invoke_protect() against the configured stage + ruleset. If the
-    Protect API is unreachable, fall back to the SAME metric computed by a real LLM
-    judge and apply the same threshold. There is no phrase/keyword matching here."""
+    Primary path: invoke_protect() against the configured stage + ruleset.
+    
+    BUG FIX (2026-06-16): The previous implementation treated ExecutionStatus.error
+    as 'not_triggered' and returned early, bypassing the real-judge fallback.
+    Root cause: Protect API returns error when the LLM metric service is unreachable
+    (e.g. context_adherence_luna not available on this cluster tier).
+    Fix: Check for ERROR status explicitly and fall through to the real-judge fallback.
+    
+    Galileo 2.3.0 migration note: invoke_protect is deprecated; the production
+    migration path is @agent_control.control() + ControlViolationError (see RB-140).
+    This lab uses invoke_protect as the primary path because no agent-control
+    server is provisioned here; the LLM judge is the real enforcement mechanism.
+    """
     draft = state.get("draft_answer", "") or ""
     context = "\n".join(state.get("retrieved_docs") or [])
     status = "not_triggered"
@@ -375,20 +402,29 @@ def protect_node(state: SupportState) -> SupportState:
                 metadata={"lab": "trinity-stack"},
             )
             if resp is not None and getattr(resp, "text", None) is not None:
-                final = resp.text
-                triggered = str(getattr(resp, "status", "")).lower().find("triggered") != -1 \
-                    and "not_triggered" not in str(getattr(resp, "status", "")).lower()
-                status = "triggered" if (triggered or final != draft) else "not_triggered"
-                return {"final_answer": final, "protect_status": status,
-                        "context_score": state.get("context_score")}
+                resp_status_str = str(getattr(resp, "status", "")).upper()
+                # BUG FIX: only trust the Protect response when it is NOT an error.
+                # ERROR means the metric service is unavailable — fall through to LLM judge.
+                if "ERROR" not in resp_status_str:
+                    final = resp.text
+                    triggered = ("TRIGGERED" in resp_status_str
+                                 and "NOT_TRIGGERED" not in resp_status_str)
+                    status = "triggered" if (triggered or final != draft) else "not_triggered"
+                    return {"final_answer": final, "protect_status": status,
+                            "context_score": state.get("context_score"),
+                            "protect_path": "invoke_protect"}
+                # Else: fall through to LLM judge (protect API metric unavailable)
         except Exception:
             pass  # fall through to the real-judge fallback
 
     # Fallback: real judge, same metric, same threshold (NOT a heuristic block-list).
+    # Active in two cases: (a) invoke_protect raised an exception, or (b) Protect
+    # returned ERROR status because the metric service is unavailable on this cluster.
     score = _judge_context_adherence(state["query"], context, draft)
     if score < ADHERENCE_FLOOR:
         status, final = "triggered", BLOCKED_MESSAGE
-    return {"final_answer": final, "protect_status": status, "context_score": score}
+    return {"final_answer": final, "protect_status": status, "context_score": score,
+            "protect_path": "llm_judge_fallback"}
 
 def route_by_intent(state: SupportState) -> str:
     return state.get("intent", "general")
@@ -464,18 +500,35 @@ def run_query(graph, query: str, verbose: bool = True, tag: str = "") -> dict:
     logger  = GalileoLogger(project=PROJECT, log_stream=LOG_STREAM)
     cb = GalileoCallback(galileo_logger=logger, start_new_trace=True, flush_on_chain_end=True)
 
+    # galileo 2.3.0: connect Agent Control observability bridge to this logger.
+    # Events from the LangChain callback flow into the bridge and are recorded
+    # alongside traces. This is step 1 of the invoke_protect → Agent Control
+    # migration path (see RB-140 §Fix - Current path for the full migration).
+    _ac_bridge = None
+    if _AGENT_CONTROL_BRIDGE_AVAILABLE:
+        try:
+            _ac_bridge = setup_agent_control_bridge(logger)
+            _ac_bridge.register()
+        except Exception:
+            pass  # bridge is observability-only; safe to skip if unavailable
+
     t0 = time.time()
     result = graph.invoke(
         {
             "query": query, "intent": None, "retrieved_docs": [], "doc_ids": [],
             "tool_result": "", "draft_answer": "", "final_answer": "",
-            "protect_status": "", "context_score": None,
+            "protect_status": "", "context_score": None, "protect_path": None,
         },
         config={"callbacks": [cb], "metadata": {
             "query_tag": tag or "baseline", "lab": "trinity-stack"}},
     )
     latency_ms = int((time.time() - t0) * 1000)
     logger.flush()
+    if _ac_bridge is not None:
+        try:
+            _ac_bridge.unregister()
+        except Exception:
+            pass
 
     protect_icon = "🛑" if result.get("protect_status") == "triggered" else "✅"
     if verbose:

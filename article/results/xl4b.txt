@@ -1,0 +1,42 @@
+
+XL-4b DRILL: Force a real Protect block (bad prompt + out-of-scope queries)
+   Project: rax-galileo-labs  |  Stream: trinity-stack  |  Tag: xl4b-out-of-scope
+
+=================================================================
+  PROD + Protect: hallucination-prone prompt, no supporting docs
+=================================================================
+  Q: What exact --hypertorch-shard flag enables 12-way tensor par
+  A: [BLOCKED by Galileo Protect] This answer failed the grounding check (context_adherence below threshold) and was withheld. The query has been routed to a human platform engineer.
+  Protect (prod-with-protect): 🛑 triggered
+
+  Q: What NCCL_QUANTUM_BUFFER value does the Fooblitz scheduler r
+  A: [BLOCKED by Galileo Protect] This answer failed the grounding check (context_adherence below threshold) and was withheld. The query has been routed to a human platform engineer.
+  Protect (prod-with-protect): 🛑 triggered
+
+  Q: What's the precise KV-cache memory formula for Mistral-Nemot
+  A: The precise KV-cache memory formula for Mistral-Nemotron-405B on TPU v7 slices is given by: 
+
+\[ \text{KV-cache memory per request} \approx 2 \times (\text{num\_layers}) \times (\text{num\_kv\_heads})
+  Protect (prod-with-protect): ✅ not_triggered
+
+  Q: Which flag enables chunked prefill in the AcmeServe 3.2 infe
+  A: In the AcmeServe 3.2 inference runtime, you can enable chunked prefill by using the `--enable-chunked-prefill` flag. This setting is crucial for reducing time-to-first-token (TTFT) under load, as it a
+  Protect (prod-with-protect): ✅ not_triggered
+
+  Q: What Kubernetes CRD name requests a Groq LPU accelerator, ex
+  A: [BLOCKED by Galileo Protect] This answer failed the grounding check (context_adherence below threshold) and was withheld. The query has been routed to a human platform engineer.
+  Protect (prod-with-protect): 🛑 triggered
+
+  Q: What's the recommended gradient-compression ratio for the He
+  A: [BLOCKED by Galileo Protect] This answer failed the grounding check (context_adherence below threshold) and was withheld. The query has been routed to a human platform engineer.
+  Protect (prod-with-protect): 🛑 triggered
+
+
+=================================================================
+  RESULT
+=================================================================
+  Protect results:  BLOCKED (triggered): 4  |  passed: 2  |  other: 0
+  → If triggered > 0, XL-4b demonstrates a real block on ungrounded answers.
+  → Read the Console (tag: xl4b-out-of-scope) for the actual context_adherence values,
+    then report: blocked count, passed count, and the adherence range.
+  Console: https://app.galileo.ai  →  rax-galileo-labs  →  trinity-stack  (filter tag=xl4b-out-of-scope)

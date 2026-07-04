@@ -35,6 +35,10 @@ article/PUBLISH-RUNBOOK.md
 # Raw console output (verbose, not publishable)
 article/results/*.txt
 article/results/all_traces.json
+article/results/*auth*.png
+article/results/*signin*.png
+article/results/*signed-in*.png
+article/results/google-*.png
 
 # OS
 .DS_Store

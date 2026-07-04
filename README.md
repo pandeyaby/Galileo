@@ -317,6 +317,7 @@ This is the most expensive class of AI failure in production: a healthy process,
 **Prod with Protect:** Galileo Protect runs on every response. Rule: `context_adherence < 0.5 → block`. The gate evaluates every response with the same metric that flagged the problem in dev.
 
 **The differentiator:** The same `context_adherence` metric that flags a failure in dev *becomes* the production Protect threshold. One metric, three jobs (dev eval → prod gate → regression check), zero glue code.
+**XL-4b:** `drills/xl4b_out_of_scope.py` forces a real Protect block with out-of-scope queries; result: 4/6 blocked, context_adherence 0.00–0.10.
 
 ### XL-5 — Slow Tool Node (FM-54)
 **Inject:** 8-second sleep in the corpus-search tool.  

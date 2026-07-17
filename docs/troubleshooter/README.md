@@ -2,12 +2,12 @@
 
 Symptom-first failure-mode runbooks for Galileo — flattened into a single static HTML page (Karpathy [rendergit](https://github.com/karpathy/rendergit)-style) for browsing, Ctrl+F, and LLM paste.
 
-**Open:** [index.html](./index.html)  
-**Local:** open this folder via any static server, or on GitHub Pages at `/troubleshooter/`.
+**Live:** [pandeyaby.github.io/Galileo/troubleshooter/](https://pandeyaby.github.io/Galileo/troubleshooter/)  
+**Open locally:** [index.html](./index.html)
 
 ## What you get
 
-- 26 copy-pasteable runbooks (auth, logging, metrics, experiments, OTel, Protect drills, …)
+- 27 copy-pasteable runbooks (auth, logging, metrics, experiments, OTel, MCP connect, Protect drills, …)
 - 5 reference pages (failure-mode backlog, common errors, troubleshooting, MCP setup, comparisons)
 - Human view + LLM/CXML view
 - Internal planning / private ops paths omitted from this public flatten

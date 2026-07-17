@@ -9,24 +9,13 @@ Real embedding retrieval, real tools, real Galileo Protect, real psutil telemetr
 
 ---
 
-## What's new — latest contributions
+## Galileo Troubleshooter
 
-### Public Galileo Troubleshooter (MD → HTML)
+**Live site:** [pandeyaby.github.io/Galileo/troubleshooter/](https://pandeyaby.github.io/Galileo/troubleshooter/) · **Source:** [`docs/troubleshooter/`](docs/troubleshooter/)
 
-**Browse:** [`docs/troubleshooter/index.html`](docs/troubleshooter/index.html) · **Notes:** [`docs/troubleshooter/README.md`](docs/troubleshooter/README.md)
+Symptom-first Galileo runbooks as a Karpathy-style static page (sidebar + filter, Human view, LLM/CXML paste). Trinity Stack proves *Galileo catches what fleet misses*; the troubleshooter answers *“I hit this error — what do I do?”*
 
-We added a Karpathy-style static site that flattens **symptom-first Galileo runbooks** into one page (sidebar + filter, Human view, LLM/CXML paste view).
-
-| What shipped | Value for this repo |
-|--------------|---------------------|
-| **26 runbooks** (auth, logging/flush, metrics, experiments, LiteLLM/custom LLM egress, OTel correlation, Protect/XL drills, …) | Turns the Trinity Stack demos into a **portable fix catalog** others can Ctrl+F without cloning the full lab loop |
-| **5 reference pages** (failure-mode backlog, common errors, troubleshooting, MCP setup, comparisons) | Context next to the drills — what failed, why it matters, how to discriminate lookalikes |
-| **Public sanitization** | Internal planning / private agent-ops paths omitted so Pages readers get signal, not workspace noise |
-| **Sits beside** existing `docs/screenshots/` | Does **not** replace the Trinity demo README or drills — additive only |
-
-**Why this raises the repo’s value:** Trinity Stack proves *Galileo catches what fleet misses* with live Console evidence. The troubleshooter answers the next question: *“I hit this error in my stack — what do I do?”* Demo + runbooks = evidence **and** operational leverage.
-
-Recent runbook coverage highlights include FM-27 (Playground + metrics LiteLLM HTML 403 on custom LLM integrations), FM-21 (judge rate-limits), FM-32 (OTel uncorrelated spans), and ground-truth / experiment scope pitfalls (FM-20 / FM-23 / FM-23a).
+Coverage includes auth/logging, metrics & experiments, custom LLM / LiteLLM egress (FM-27), judge rate-limits (FM-21), OTel correlation (FM-32), Galileo MCP connect (FM-47 — the OpenClaw integration gate), and Protect / XL drills — kept public-clean (no private ops paths).
 
 ---
 

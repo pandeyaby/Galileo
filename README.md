@@ -16,19 +16,28 @@ If you’re debugging Galileo itself: [troubleshooter](https://pandeyaby.github.
 
 Symptom → fix pages for common Galileo failures (auth, missing traces, metrics, integrations, Protect). Sidebar filter, readable view, and a pasteable dump for an LLM. No internal ticket noise.
 
+The other path: share a runbook (or the Markdown dump) with a self-hosted agent — OpenClaw, Cursor, anything that can read skills/MCP. The agent matches the symptom, follows the steps, and talks to Galileo when needed. You keep the playbooks; the agent does the rest.
+
 ---
 
 ## DizzyGraph
 
-Optional runtime for the same Trinity pipeline as nested loops + meta-loops:
+Graphs made of loops — checkpoints, streaming, HITL, and a multi-agent **control plane** (fleet UI, alerts, metrics, supervisor).
+
+**Control plane (v0.4+):** concurrent `thread_id`s with SQLite/Postgres checkpoints; Mermaid + live path overlay; lag/fail/loop/stuck metrics; API-key tenants. **Live Trinity** registers only with real keys (no mock fleet for `--trinity`). Galileo fits that are shipped: Protect as `LoopNode` checker, XL drill fan-out under a supervisor, silent-regression meta-loop, HITL after Protect trigger, tenant → project/stream mapping, path ↔ span names (`dizzygraph.<node>`, pragmatic v1).
 
 ```bash
-pip install pydantic networkx matplotlib
-python examples/demo_refinement.py
-python trinity_dizzy.py --mock --meta 3
+pip install -e ".[control,dev,viz]"
+pytest
+python -m dizzygraph.control --demo 8 --fanout 4          # http://127.0.0.1:8787
+python -m dizzygraph.control --trinity 4 --port 8800      # live Trinity; needs OPENAI_API_KEY
+python examples/demo_hitl.py
+python trinity_dizzy.py --mock --mermaid                  # offline topology only
 ```
 
-[`dizzygraph/README.md`](dizzygraph/README.md) · [`docs/RUNBOOK-DIZZYGRAPH.md`](docs/RUNBOOK-DIZZYGRAPH.md). Default drills still use `app.py` (LangGraph).
+[`dizzygraph/README.md`](dizzygraph/README.md) · [`dizzygraph/control/GOALS.md`](dizzygraph/control/GOALS.md) · [`docs/GALILEO-DIZZYGRAPH-USE-CASES.md`](docs/GALILEO-DIZZYGRAPH-USE-CASES.md) · [`docs/RUNBOOK-DIZZYGRAPH.md`](docs/RUNBOOK-DIZZYGRAPH.md)
+
+**Integrations (starters):** [`examples/integrations/`](examples/integrations/) — CrewAI, OpenAI Agents, OpenInference-shaped LangGraph spans. Google ADK and a full OTel exporter are still pending.
 
 ---
 

@@ -1,5 +1,9 @@
-# === dizzygraph/persist.py ===
-"""Save/load graph skeletons and state snapshots."""
+"""Save/load topology skeletons and state snapshots.
+
+Callables cannot round-trip through JSON. Use ``save_graph_skeleton`` /
+``load_graph_skeleton`` for honest naming. ``load_graph`` is an alias that
+returns the skeleton dict (not a runnable Graph).
+"""
 
 from __future__ import annotations
 
@@ -11,15 +15,20 @@ from .graph import Graph
 from .state import State
 
 
-def save_graph(graph: Graph, path: str | Path) -> Path:
+def save_graph_skeleton(graph: Graph, path: str | Path) -> Path:
     path = Path(path)
     path.write_text(json.dumps(graph.to_serializable(), indent=2), encoding="utf-8")
     return path
 
 
-def load_graph(path: str | Path) -> dict[str, Any]:
-    """Load serializable skeleton. Re-bind callables when reconstructing runtime Graph."""
+def load_graph_skeleton(path: str | Path) -> dict[str, Any]:
+    """Load topology JSON. Re-bind node callables yourself to rebuild a Graph."""
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+# Back-compat aliases (honest docs; same behavior)
+save_graph = save_graph_skeleton
+load_graph = load_graph_skeleton
 
 
 def save_state(state: State, path: str | Path) -> Path:

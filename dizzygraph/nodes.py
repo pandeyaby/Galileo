@@ -12,6 +12,7 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .retry import RetryPolicy
 from .state import State, merge_state
 
 log = logging.getLogger("dizzygraph.nodes")
@@ -44,6 +45,7 @@ class Node(BaseModel, ABC):
     name: str = ""
     description: str = ""
     timeout_s: float | None = None
+    retry_policy: RetryPolicy | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     node_kind: ClassVar[str] = "base"
 
@@ -136,6 +138,12 @@ class LoopNode(Node):
                 log.info("LoopNode %s stop_condition at iter=%s", self.id, i)
                 break
 
+# In LoopNode.run final return — preserve protect_* metrics from checker
+        protect_metrics = {
+            k: current.metrics[k]
+            for k in ("protect_status", "protect_path", "protect_score")
+            if k in current.metrics
+        }
         return merge_state(
             current,
             {
@@ -145,6 +153,7 @@ class LoopNode(Node):
                     "loop_converged": bool(scores and self.score_threshold is not None and scores[-1] >= self.score_threshold)
                     if scores
                     else False,
+                    **protect_metrics,
                 }
             },
         )
@@ -175,14 +184,7 @@ class SubGraphNode(Node):
 @register_node_type("agent")
 class AgentNode(Node):
     """
-    LLM-ready step. Default uses a mock; swap `llm_fn` for litellm/OpenAI.
-
-    Example real swap::
-
-        async def call_llm(state):
-            from litellm import acompletion
-            r = await acompletion(model="gpt-4o-mini", messages=[...])
-            return {"data": {"reply": r.choices[0].message.content}}
+    LLM-ready step. Pass ``llm_fn`` for real calls; omit for offline mock.
     """
 
     node_kind: ClassVar[str] = "agent"
@@ -192,7 +194,7 @@ class AgentNode(Node):
 
     def run(self, state: State) -> State:
         if self.llm_fn is None:
-            prompt = state.get("query") or state.get("data", {}).get("prompt") or ""
+            prompt = state.get("query") or ""
             reply = f"{self.mock_reply}: {str(prompt)[:80]}"
             return merge_state(
                 state,
@@ -203,7 +205,15 @@ class AgentNode(Node):
             )
         out = self.llm_fn(state)
         if asyncio.iscoroutine(out):
-            out = asyncio.get_event_loop().run_until_complete(out)  # type: ignore[arg-type]
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop and loop.is_running():
+                raise RuntimeError(
+                    f"AgentNode {self.id}: async llm_fn called from sync run(); use arun()"
+                )
+            out = asyncio.run(out)  # type: ignore[arg-type]
         if isinstance(out, State):
             return out
         return merge_state(state, out)  # type: ignore[arg-type]
@@ -217,3 +227,44 @@ class AgentNode(Node):
         if isinstance(out, State):
             return out
         return merge_state(state, out)  # type: ignore[arg-type]
+
+
+@register_node_type("map")
+class MapNode(Node):
+    """
+    Fan-out over ``state.data[items_key]`` — run ``fn`` per item, collect results.
+
+    Each item gets a shallow state copy with ``data[item_key] = item``. Results
+    land in ``data[results_key]`` (replace). Use with ``parallel_branches`` on
+    sibling AtomicNodes for true multi-node parallelism; MapNode is sequential
+    by default, optional ``parallel=True`` uses a thread pool.
+    """
+
+    node_kind: ClassVar[str] = "map"
+    fn: Callable[[State], State | MappingUpdate]
+    items_key: str = "items"
+    item_key: str = "item"
+    results_key: str = "map_results"
+    parallel: bool = False
+    max_workers: int = 8
+
+    def run(self, state: State) -> State:
+        items = state.data.get(self.items_key) or []
+        if not isinstance(items, list):
+            items = [items]
+
+        def one(item: Any) -> Any:
+            st = merge_state(state, {"data": {self.item_key: item}})
+            out = self.fn(st)
+            if isinstance(out, State):
+                return out.data.get(self.results_key) or out.data.get("result") or out.data
+            return out.get(self.results_key) or out.get("result") or out.get("data") or out
+
+        if self.parallel and len(items) > 1:
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+                results = list(pool.map(one, items))
+        else:
+            results = [one(i) for i in items]
+        return merge_state(state, {"data": {self.results_key: results}})

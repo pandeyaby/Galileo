@@ -41,12 +41,28 @@ pip install networkx matplotlib
 ## 1. Smoke (offline)
 
 ```bash
-python trinity_dizzy.py --mock --viz --write-evidence
+pip install -e ".[dev,viz]"
+pytest
+python examples/demo_hitl.py
 python examples/demo_refinement.py
 python examples/demo_agent.py
+python trinity_dizzy.py --mock --viz --mermaid --write-evidence
 ```
 
-Expect: node trace printed, answer text, optional `dizzygraph_out/trinity_dizzy.png`.
+Expect: pytest green, HITL interrupt→resume, node trace printed, Mermaid flowchart, optional `dizzygraph_out/trinity_dizzy.png`.
+
+**Runtime notes (v0.4+):**
+
+- Live **responder is a `LoopNode`** whose **checker is live Galileo Protect**
+  (`invoke_protect` / LLM-judge fallback) — not a keyword heuristic.
+  Non-convergence → fleet `loop_non_converge` with Protect status/score/path.
+- When Protect triggers on the final gate, `interrupt()` pauses for HITL
+  approve/edit; `POST /api/runs/{id}/resume` continues.
+- Mock (`--mock`) still uses a cheap local checker for offline topology only.
+- `data.*` channels **replace** by default (no silent `doc_ids` concat).
+- Real per-node checkpoints when you pass `checkpointer=` + `thread_id`.
+- `interrupt()` / `resume()` for human gates; `to_mermaid()` for docs.
+- Control plane: `python -m dizzygraph.control` (default port **8787**). Live Trinity fleet: `--trinity N` (keys required, no mock). Use-case status: [`GALILEO-DIZZYGRAPH-USE-CASES.md`](GALILEO-DIZZYGRAPH-USE-CASES.md).
 
 ---
 
@@ -109,14 +125,27 @@ Live graph (default):
 
 `intake → retriever → tools → responder → protect`
 
-Mock graph uses a **LoopNode** on `responder` (maker + quality checker) to demonstrate loop-inside-graph without cloud cost.
+Mock graph uses a **LoopNode** on `responder` (cheap local checker) for offline
+topology only. Live Trinity uses **Protect as the LoopNode checker**, then a
+Protect+HITL gate node.
 
 Standalone demos:
 
 - `examples/demo_refinement.py` — LoopNode + graph-level feedback edge + MetaLoopExecutor  
 - `examples/demo_agent.py` — AgentNode + LoopNode + SubGraphNode + meta  
 
-Package docs: [`dizzygraph/README.md`](../dizzygraph/README.md)
+Package docs: [`dizzygraph/README.md`](../dizzygraph/README.md) · control goals: [`dizzygraph/control/GOALS.md`](../dizzygraph/control/GOALS.md)
+
+### Control plane (optional)
+
+```bash
+pip install -e ".[control,dev]"
+python -m dizzygraph.control --demo 8 --fanout 4          # http://127.0.0.1:8787
+python -m dizzygraph.control --trinity 4 --port 8800      # live Trinity agents
+```
+
+UI: fleet list, Mermaid + path overlay, state, metrics (lag / fail / loop / stuck), alerts.
+`--trinity` and `POST /api/trinity/*` are **live-only** (400 / exit if keys missing).
 
 ---
 

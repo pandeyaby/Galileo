@@ -144,8 +144,36 @@ class Graph(BaseModel):
             return None
         return layers
 
+    def compile(
+        self,
+        *,
+        checkpointer=None,
+        callbacks=None,
+        default_retry=None,
+        parallel_branches: bool = False,
+        max_graph_iterations: int = 32,
+        fail_fast: bool = False,
+    ):
+        """Return a ``CompiledGraph`` (invoke / stream / resume)."""
+        from .compile import compile_graph
+
+        return compile_graph(
+            self,
+            checkpointer=checkpointer,
+            callbacks=callbacks,
+            default_retry=default_retry,
+            parallel_branches=parallel_branches,
+            max_graph_iterations=max_graph_iterations,
+            fail_fast=fail_fast,
+        )
+
+    def to_mermaid(self) -> str:
+        from .viz import to_mermaid
+
+        return to_mermaid(self)
+
     def to_serializable(self) -> dict[str, Any]:
-        """JSON-friendly skeleton (callables omitted — rebind after load)."""
+        """JSON-friendly skeleton (callables omitted — topology only)."""
         return {
             "id": self.id,
             "name": self.name,
@@ -159,6 +187,7 @@ class Graph(BaseModel):
                     "description": n.description,
                     "kind": getattr(n, "node_kind", type(n).__name__),
                     "metadata": n.metadata,
+                    "timeout_s": n.timeout_s,
                 }
                 for n in self.nodes.values()
             ],
@@ -173,4 +202,5 @@ class Graph(BaseModel):
                 for e in self.edges
             ],
             "cycles": self.detect_cycles(),
+            "mermaid": self.to_mermaid(),
         }

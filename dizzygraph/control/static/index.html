@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DizzyGraph Control Plane</title>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: false, theme: "neutral", securityLevel: "loose" });
+    window.__mermaid = mermaid;
+  </script>
+  <style>
+    :root {
+      --bg: #f4f2ec; --panel: #fffcf7; --ink: #1c1917; --muted: #78716c; --line: #d6d3d1;
+      --run: #0f766e; --ok: #15803d; --warn: #b45309; --crit: #b91c1c; --info: #1d4ed8; --hi: #fde68a;
+      --path: #bbf7d0;
+      --mono: "IBM Plex Mono", ui-monospace, monospace;
+      --sans: "IBM Plex Sans", "Source Sans 3", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: var(--sans); color: var(--ink);
+      background: radial-gradient(1200px 500px at 10% -10%, #e7e5e4 0%, transparent 55%), var(--bg);
+      min-height: 100vh;
+    }
+    header {
+      display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap;
+      padding: 1rem 1.25rem; border-bottom: 1px solid var(--line);
+      background: rgba(255,252,247,0.9); backdrop-filter: blur(8px);
+      position: sticky; top: 0; z-index: 5;
+    }
+    header h1 { margin: 0; font-size: 1.15rem; letter-spacing: -0.02em; }
+    header .sub { color: var(--muted); font-size: 0.85rem; }
+    header .actions { margin-left: auto; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    button {
+      font: inherit; border: 1px solid var(--line); background: var(--panel);
+      padding: 0.4rem 0.75rem; border-radius: 6px; cursor: pointer;
+    }
+    button.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+    .layout { display: grid; grid-template-columns: 280px 1fr 340px; min-height: calc(100vh - 58px); }
+    @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } }
+    aside, main, .rail {
+      border-right: 1px solid var(--line); padding: 1rem; overflow: auto;
+      max-height: calc(100vh - 58px);
+    }
+    .rail { border-right: none; border-left: 1px solid var(--line); }
+    h2 { margin: 0 0 0.75rem; font-size: 0.75rem; text-transform: uppercase;
+         letter-spacing: 0.08em; color: var(--muted); }
+    .pills { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1rem; }
+    .pill {
+      font-family: var(--mono); font-size: 0.72rem; padding: 0.25rem 0.5rem;
+      border-radius: 999px; border: 1px solid var(--line); background: #fff;
+    }
+    .metrics {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 1rem;
+    }
+    .metric {
+      background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 0.55rem 0.65rem;
+    }
+    .metric .k { font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .metric .v { font-family: var(--mono); font-size: 1rem; margin-top: 0.15rem; }
+    .run-list { list-style: none; margin: 0; padding: 0; }
+    .run-list li {
+      padding: 0.65rem 0.55rem; border: 1px solid transparent; border-radius: 8px;
+      cursor: pointer; margin-bottom: 0.25rem;
+    }
+    .run-list li:hover { background: #fff; border-color: var(--line); }
+    .run-list li.active { background: #fff; border-color: var(--ink); }
+    .run-list .name { font-weight: 600; font-size: 0.9rem; }
+    .run-list .meta { font-family: var(--mono); font-size: 0.7rem; color: var(--muted); margin-top: 0.15rem; }
+    .status {
+      display: inline-block; font-family: var(--mono); font-size: 0.65rem;
+      padding: 0.1rem 0.35rem; border-radius: 4px; text-transform: uppercase;
+    }
+    .status.running { background: #ccfbf1; color: var(--run); }
+    .status.succeeded { background: #dcfce7; color: var(--ok); }
+    .status.failed, .status.critical { background: #fee2e2; color: var(--crit); }
+    .status.interrupted, .status.warning { background: #ffedd5; color: var(--warn); }
+    .status.pending, .status.info { background: #e0e7ff; color: var(--info); }
+    .panel {
+      background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+      padding: 0.9rem; margin-bottom: 1rem;
+    }
+    .panel h3 { margin: 0 0 0.6rem; font-size: 0.95rem; }
+    #mermaid-wrap { overflow: auto; min-height: 160px; }
+    pre.state {
+      font-family: var(--mono); font-size: 0.72rem; background: #1c1917; color: #fafaf9;
+      padding: 0.75rem; border-radius: 8px; overflow: auto; max-height: 240px; margin: 0;
+    }
+    .path {
+      font-family: var(--mono); font-size: 0.75rem; display: flex; flex-wrap: wrap; gap: 0.35rem;
+    }
+    .path span {
+      background: var(--path); border: 1px solid #86efac; border-radius: 4px; padding: 0.15rem 0.4rem;
+    }
+    .path span.current { background: var(--hi); border-color: #ca8a04; }
+    .alerts { margin: 0; padding: 0; }
+    .alerts li {
+      list-style: none; padding: 0.55rem 0.5rem; border-bottom: 1px solid var(--line); font-size: 0.82rem;
+    }
+    .alerts .rule { font-family: var(--mono); font-size: 0.68rem; color: var(--muted); }
+    .empty { color: var(--muted); font-size: 0.85rem; }
+    .live { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.75rem; color: var(--muted); }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); animation: pulse 1.4s infinite; }
+    @keyframes pulse { 50% { opacity: 0.35; } }
+    canvas#spark { width: 100%; height: 64px; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>DizzyGraph Control Plane</h1>
+    <span class="sub">fleet · path · metrics · supervisor · alerts</span>
+    <span class="live"><span class="dot"></span><span id="live-label">connecting</span></span>
+    <div class="actions">
+      <button id="btn-spawn" class="primary">Spawn 8</button>
+      <button id="btn-fanout">Fan-out 6</button>
+      <button id="btn-trinity">Trinity ×4</button>
+      <button id="btn-xl">XL-1..6 fan-out</button>
+      <button id="btn-refresh">Refresh</button>
+    </div>
+  </header>
+  <div class="layout">
+    <aside>
+      <h2>Fleet</h2>
+      <div class="pills" id="summary"></div>
+      <div class="metrics" id="metrics"></div>
+      <ul class="run-list" id="runs"></ul>
+    </aside>
+    <main>
+      <div class="panel">
+        <h3 id="detail-title">Select an agent</h3>
+        <div id="detail-meta" class="empty">Thread state, path, and graph appear here.</div>
+      </div>
+      <div class="panel">
+        <h3>Execution path</h3>
+        <div class="path" id="path-view"><span class="empty">—</span></div>
+      </div>
+      <div class="panel">
+        <h3>Graph · live path overlay</h3>
+        <div id="mermaid-wrap"><div class="empty">No graph loaded</div></div>
+      </div>
+      <div class="panel">
+        <h3>Lag sparkline (run_lag_s)</h3>
+        <canvas id="spark" height="64"></canvas>
+      </div>
+      <div class="panel">
+        <h3>State snapshot</h3>
+        <pre class="state" id="state-view">{}</pre>
+      </div>
+      <div class="panel" id="children-panel" style="display:none">
+        <h3>Supervisor children</h3>
+        <ul class="run-list" id="children"></ul>
+      </div>
+      <div class="panel" id="resume-panel" style="display:none">
+        <h3>HITL resume</h3>
+        <button id="btn-approve" class="primary">Approve &amp; resume</button>
+      </div>
+    </main>
+    <div class="rail">
+      <h2>Open alerts</h2>
+      <ul class="alerts" id="alerts"><li class="empty">None</li></ul>
+      <h2 style="margin-top:1.25rem">Recent events</h2>
+      <ul class="alerts" id="events"><li class="empty">Waiting for stream…</li></ul>
+    </div>
+  </div>
+  <script>
+    const state = { selected: null, lastEventId: 0, fleet: null };
+
+    async function api(path, opts) {
+      const r = await fetch(path, opts);
+      if (!r.ok) {
+        let detail = await r.text();
+        try {
+          const j = JSON.parse(detail);
+          detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail || j, null, 2);
+        } catch (_) {}
+        throw new Error(detail || r.statusText);
+      }
+      return r.json();
+    }
+    function statusPill(s) {
+      return `<span class="status ${s}">${s}</span>`;
+    }
+    function metricCard(k, v) {
+      return `<div class="metric"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+    }
+
+    function drawSpark(series) {
+      const c = document.getElementById("spark");
+      const ctx = c.getContext("2d");
+      const w = c.width = c.clientWidth * devicePixelRatio;
+      const h = c.height = 64 * devicePixelRatio;
+      ctx.clearRect(0, 0, w, h);
+      const vals = (series || []).map(p => p.value);
+      if (vals.length < 2) {
+        ctx.fillStyle = "#a8a29e";
+        ctx.font = `${12 * devicePixelRatio}px sans-serif`;
+        ctx.fillText("not enough samples yet", 12 * devicePixelRatio, 36 * devicePixelRatio);
+        return;
+      }
+      const min = Math.min(...vals), max = Math.max(...vals);
+      const span = (max - min) || 1;
+      ctx.strokeStyle = "#0f766e";
+      ctx.lineWidth = 2 * devicePixelRatio;
+      ctx.beginPath();
+      vals.forEach((v, i) => {
+        const x = (i / (vals.length - 1)) * (w - 8) + 4;
+        const y = h - 6 - ((v - min) / span) * (h - 14);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    async function refreshFleet() {
+      const data = await api("/api/fleet");
+      state.fleet = data;
+      const s = data.summary || {};
+      const m = data.metrics || {};
+      document.getElementById("summary").innerHTML =
+        ["total","running","succeeded","failed","interrupted","open_alerts"]
+          .filter(k => s[k] != null)
+          .map(k => `<span class="pill"><strong>${s[k]}</strong> ${k}</span>`).join("");
+      document.getElementById("metrics").innerHTML = [
+        metricCard("fail rate", (m.fail_rate ?? 0).toFixed(3)),
+        metricCard("lag p50", `${(m.lag_p50_s ?? 0).toFixed(2)}s`),
+        metricCard("lag p95", `${(m.lag_p95_s ?? 0).toFixed(2)}s`),
+        metricCard("loop avg", (m.loop_iterations_avg ?? 0).toFixed(2)),
+        metricCard("loop max", m.loop_iterations_max ?? 0),
+        metricCard("stuck", m.stuck_nodes ?? 0),
+      ].join("");
+
+      const runs = document.getElementById("runs");
+      runs.innerHTML = (data.runs || []).map(r => `
+        <li data-id="${r.thread_id}" class="${state.selected===r.thread_id?'active':''}">
+          <div class="name">${r.agent_name || r.thread_id} ${statusPill(r.status)}</div>
+          <div class="meta">${r.thread_id} · ${r.current_node || "—"}
+            ${r.parent_thread_id ? " · child" : ""}</div>
+        </li>`).join("") || `<li class="empty">No runs — spawn or fan-out</li>`;
+      runs.querySelectorAll("li[data-id]").forEach(li => {
+        li.onclick = () => selectRun(li.dataset.id);
+      });
+
+      const alerts = document.getElementById("alerts");
+      alerts.innerHTML = (data.alerts || []).map(a => `
+        <li>
+          <div>${statusPill(a.severity)} <strong>${a.message}</strong></div>
+          <div class="rule">${a.rule} · ${a.thread_id}
+            <button data-ack="${a.id}" style="float:right;padding:0.15rem 0.4rem;font-size:0.7rem">ack</button>
+          </div>
+        </li>`).join("") || `<li class="empty">None</li>`;
+      alerts.querySelectorAll("[data-ack]").forEach(btn => {
+        btn.onclick = async (e) => {
+          e.stopPropagation();
+          await api(`/api/alerts/${btn.dataset.ack}/ack`, { method: "POST" });
+          refreshFleet();
+        };
+      });
+
+      const metrics = await api("/api/metrics");
+      drawSpark(metrics.series?.run_lag_s || []);
+    }
+
+    async function selectRun(threadId) {
+      state.selected = threadId;
+      await refreshFleet();
+      const detail = await api(`/api/runs/${threadId}`);
+      document.getElementById("detail-title").textContent =
+        `${detail.run.agent_name || threadId}`;
+
+      const path = detail.path || [];
+      const cur = detail.run.current_node;
+      document.getElementById("path-view").innerHTML = path.length
+        ? path.map(n => {
+            const span = `dizzygraph.${n}`;
+            return `<span class="${n===cur?'current':''}" title="otel.span_name=${span}">${n}<small style="opacity:.65"> · ${span}</small></span>`;
+          }).join("")
+        : `<span class="empty">no steps yet</span>`;
+
+      const snap = detail.checkpoint?.state || {};
+      const protectHint = snap?.data?.protect_status
+        ? ` · protect: <code>${snap.data.protect_status}</code> score=<code>${snap.data.protect_score ?? "—"}</code>`
+        : "";
+      document.getElementById("detail-meta").innerHTML =
+        `${statusPill(detail.run.status)}
+         · current: <code>${detail.run.current_node || "—"}</code>
+         · graph: <code>${detail.graph_name || detail.run.graph_id}</code>
+         ${detail.run.parent_thread_id ? ` · parent: <code>${detail.run.parent_thread_id}</code>` : ""}
+         ${protectHint}
+         ${detail.run.error ? ` · error: ${detail.run.error}` : ""}`;
+      document.getElementById("state-view").textContent = JSON.stringify(snap, null, 2);
+      document.getElementById("resume-panel").style.display =
+        detail.run.status === "interrupted" ? "block" : "none";
+
+      const kids = detail.children || [];
+      document.getElementById("children-panel").style.display = kids.length ? "block" : "none";
+      document.getElementById("children").innerHTML = kids.map(c => `
+        <li data-id="${c.thread_id}">
+          <div class="name">${c.agent_name} ${statusPill(c.status)}</div>
+          <div class="meta">${c.thread_id}</div>
+        </li>`).join("");
+      document.querySelectorAll("#children li[data-id]").forEach(li => {
+        li.onclick = () => selectRun(li.dataset.id);
+      });
+
+      await renderMermaid(detail.mermaid || "", path, cur);
+    }
+
+    async function renderMermaid(src, path, currentNode) {
+      const wrap = document.getElementById("mermaid-wrap");
+      if (!src) { wrap.innerHTML = `<div class="empty">No mermaid</div>`; return; }
+      let text = src;
+      const seen = new Set();
+      (path || []).forEach(n => {
+        const id = n.replace(/-/g, "_");
+        if (seen.has(id)) return;
+        seen.add(id);
+        const fill = n === currentNode ? "#fde68a" : "#bbf7d0";
+        const stroke = n === currentNode ? "#ca8a04" : "#16a34a";
+        text += `\n  style ${id} fill:${fill},stroke:${stroke},stroke-width:2px`;
+      });
+      const id = "mmd-" + Math.random().toString(36).slice(2);
+      wrap.innerHTML = `<pre class="mermaid" id="${id}"></pre>`;
+      try {
+        const { svg } = await window.__mermaid.render(id + "-svg", text);
+        wrap.innerHTML = svg;
+      } catch (e) {
+        wrap.innerHTML = `<pre>${text}</pre><div class="empty">${e}</div>`;
+      }
+    }
+
+    function pushEvent(ev) {
+      const box = document.getElementById("events");
+      if (box.querySelector(".empty")) box.innerHTML = "";
+      const li = document.createElement("li");
+      li.innerHTML = `<div><strong>${ev.type}</strong> ${ev.node_id || ""}</div>
+        <div class="rule">${ev.thread_id} · #${ev.id}</div>`;
+      box.prepend(li);
+      while (box.children.length > 40) box.lastChild.remove();
+      if (["alert","node_end","interrupt","run_succeeded","run_failed","node_start","supervisor_done","supervisor_fanout"].includes(ev.type)) {
+        refreshFleet();
+        if (state.selected === ev.thread_id) selectRun(ev.thread_id);
+      }
+    }
+
+    function connectSSE() {
+      const es = new EventSource(`/api/events/stream?since=${state.lastEventId}`);
+      document.getElementById("live-label").textContent = "live";
+      es.onmessage = (msg) => {
+        const ev = JSON.parse(msg.data);
+        state.lastEventId = ev.id;
+        pushEvent(ev);
+      };
+      es.onerror = () => {
+        document.getElementById("live-label").textContent = "reconnecting…";
+        es.close();
+        setTimeout(connectSSE, 1500);
+      };
+    }
+
+    document.getElementById("btn-spawn").onclick = async () => {
+      await api("/api/demo/spawn", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ n: 8 }),
+      });
+      refreshFleet();
+    };
+    document.getElementById("btn-fanout").onclick = async () => {
+      const res = await api("/api/supervisor/fanout", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ n: 6, wait: false }),
+      });
+      await refreshFleet();
+      if (res.parent_thread_id) selectRun(res.parent_thread_id);
+    };
+    document.getElementById("btn-trinity").onclick = async () => {
+      try {
+        await api("/api/trinity/register", { method: "POST" });
+        const res = await api("/api/trinity/spawn", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ n: 4, live: true }),
+        });
+        await refreshFleet();
+        if (res.parent_thread_id) selectRun(res.parent_thread_id);
+      } catch (err) {
+        alert("Trinity live spawn failed:\\n" + (err && err.message ? err.message : err));
+      }
+    };
+    document.getElementById("btn-xl").onclick = async () => {
+      try {
+        const res = await api("/api/trinity/xl-fanout", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ wait: false }),
+        });
+        await refreshFleet();
+        if (res.parent_thread_id) selectRun(res.parent_thread_id);
+      } catch (err) {
+        alert("XL fan-out failed (needs live keys):\\n" + (err && err.message ? err.message : err));
+      }
+    };
+    document.getElementById("btn-refresh").onclick = () => refreshFleet();
+    document.getElementById("btn-approve").onclick = async () => {
+      if (!state.selected) return;
+      await api(`/api/runs/${state.selected}/resume`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          update: { data: { approved: true } },
+        }),
+      });
+      refreshFleet();
+    };
+
+    refreshFleet();
+    connectSSE();
+  </script>
+</body>
+</html>

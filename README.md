@@ -1,21 +1,34 @@
-# Trinity Stack — AI-Platform Engineering Assistant
+# Trinity Stack
 
-> **LangGraph builds it. Fleet telemetry keeps it alive. Galileo makes it trustworthy.**
+An engineering assistant for ML platform work — training, inference, infra — with retrieval, tools, and a Protect gate in the loop.
 
-A production-grade autonomous AI agent — the kind a frontier AI org (Meta / OpenAI / NVIDIA) runs internally — **broken 6 ways** with complete observability across three layers. Every failure mode has a working drill, real measured metrics from a live run, and a copy-pasteable runbook.
+The interesting part isn’t the happy path. It’s what happens when something quietly goes wrong: bad retrieval, a stuck process, a slow tool, a quality drop that looks like a win in fleet metrics. This repo has drills for those cases, traces you can open in Galileo, and a short runbook next to each one.
 
-**No mocks. No simulation. No toy domains.**
-Real embedding retrieval, real tools, real Galileo Protect, real psutil telemetry. Volume is kept small for cost; nothing is faked.
+Under the hood it’s a small graph of steps (LangGraph or DizzyGraph), process telemetry on the side, and Galileo for trust. Keep the volume low; hit real APIs.
+
+If you’re debugging Galileo itself: [troubleshooter](https://pandeyaby.github.io/Galileo/troubleshooter/). If you’re wiring graphs-of-loops: [DizzyGraph runbook](docs/RUNBOOK-DIZZYGRAPH.md).
 
 ---
 
 ## Galileo Troubleshooter
 
-**Live site:** [pandeyaby.github.io/Galileo/troubleshooter/](https://pandeyaby.github.io/Galileo/troubleshooter/) · **Source:** [`docs/troubleshooter/`](docs/troubleshooter/)
+**Live:** [pandeyaby.github.io/Galileo/troubleshooter/](https://pandeyaby.github.io/Galileo/troubleshooter/) · **Source:** [`docs/troubleshooter/`](docs/troubleshooter/)
 
-Symptom-first Galileo runbooks as a Karpathy-style static page (sidebar + filter, Human view, LLM/CXML paste). Trinity Stack proves *Galileo catches what fleet misses*; the troubleshooter answers *“I hit this error — what do I do?”*
+Symptom → fix pages for common Galileo failures (auth, missing traces, metrics, integrations, Protect). Sidebar filter, readable view, and a pasteable dump for an LLM. No internal ticket noise.
 
-Coverage includes auth/logging, metrics & experiments, custom LLM / LiteLLM egress (FM-27), judge rate-limits (FM-21), OTel correlation (FM-32), Galileo MCP connect (FM-47 — the OpenClaw integration gate), and Protect / XL drills — kept public-clean (no private ops paths).
+---
+
+## DizzyGraph
+
+Optional runtime for the same Trinity pipeline as nested loops + meta-loops:
+
+```bash
+pip install pydantic networkx matplotlib
+python examples/demo_refinement.py
+python trinity_dizzy.py --mock --meta 3
+```
+
+[`dizzygraph/README.md`](dizzygraph/README.md) · [`docs/RUNBOOK-DIZZYGRAPH.md`](docs/RUNBOOK-DIZZYGRAPH.md). Default drills still use `app.py` (LangGraph).
 
 ---
 
@@ -420,7 +433,7 @@ See `requirements.txt`.
 ## The Loop-Engineering Context
 
 This repo is a companion to the article:  
-**"A Loop Is Only as Good as Its Gate"** — [read it on Medium](https://medium.com/@abhinavpandey) *(link coming)*
+**[Six Ways to Break an AI Agent (My Dashboards Caught One)](https://pandeyaby.medium.com/six-ways-to-break-an-ai-agent-my-dashboards-caught-one-95d01627d57a)**
 
 The thesis, in one paragraph: the leverage in AI moved from prompting to loop design. A loop needs a gate — an objective verifier that runs without the author's optimism. Galileo *is* that gate: the eval metric that flags a problem in dev becomes the Protect rule in prod becomes the regression check that locks it permanently. Every failure you debug makes the loop harder to break. That's the self-repairing harness.
 

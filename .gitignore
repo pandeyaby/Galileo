@@ -17,6 +17,9 @@ env/
 # Cached embeddings (regenerated on first run)
 .vector_cache/
 
+# DizzyGraph demo artifacts
+dizzygraph_out/
+
 # Fleet runtime state (not source)
 fleet/heartbeat.json
 fleet/latency.log

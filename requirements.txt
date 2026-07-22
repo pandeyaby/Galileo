@@ -8,5 +8,8 @@ numpy>=2.0
 psutil>=6.0
 openai>=1.0
 # Agent Control SDK (galileo 2.3.0 migration path from invoke_protect)
-# Installed 2026-06-16; provides setup_agent_control_bridge + @control() decorator
 agent-control-sdk[galileo]>=8.0.0
+# DizzyGraph (graphs made of loops + meta-loops)
+pydantic>=2.0
+networkx>=3.0
+matplotlib>=3.8

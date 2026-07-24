@@ -31,7 +31,7 @@ os.environ.setdefault("GALILEO_API_KEY",
     ["mcp"]["servers"]["galileo"]["headers"]["Galileo-API-Key"]
 )
 
-from app import (build_graph, run_query, load_kb, save_kb,
+from app import (build_graph, run_query, load_kb, save_kb, restore_full_corpus,
                  KNOWLEDGE_BASE_ORIGINAL, KNOWLEDGE_BASE_POISONED,
                  KB_FILE, PROJECT, LOG_STREAM)
 
@@ -80,6 +80,9 @@ def run_drill():
     banner("STEP 2 — INJECT: Swap knowledge base to wrong corpus", "─")
     print("Replacing the engineering corpus with a completely off-domain index...")
     print("(meal kits, yoga classes, plumbing, gardening, pet grooming)")
+    # Preserve lab-scale KB so STEP 7 can restore hundreds/thousands of chunks.
+    if KB_FILE.exists():
+        save_kb(json.loads(KB_FILE.read_text()), KB_FILE.with_suffix(".json.bak"))
     save_kb(KNOWLEDGE_BASE_POISONED, KB_FILE)
     print(f"☠️  KB poisoned at {datetime.datetime.utcnow().isoformat()} UTC")
 
@@ -150,9 +153,10 @@ def run_drill():
 
     # ── STEP 7: Recover ──
     banner("STEP 7 — RECOVER: Restore correct corpus", "─")
-    save_kb(KNOWLEDGE_BASE_ORIGINAL, KB_FILE)
+    restore_full_corpus()
     print(f"✅ KB restored at {datetime.datetime.utcnow().isoformat()} UTC")
     print("Running 2 verification queries...")
+    # Drill verification still uses the seed KB for fast, deterministic answers.
     graph_restored = build_graph(kb=KNOWLEDGE_BASE_ORIGINAL)
     for q in XL2_QUERIES[:2]:
         run_query(graph_restored, q, verbose=True, tag="xl2-recovered")

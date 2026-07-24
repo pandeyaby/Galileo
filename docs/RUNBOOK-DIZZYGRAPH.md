@@ -51,8 +51,10 @@ python trinity_dizzy.py --mock --viz --mermaid --write-evidence
 
 Expect: pytest green, HITL interrupt→resume, node trace printed, Mermaid flowchart, optional `dizzygraph_out/trinity_dizzy.png`.
 
-**Runtime notes (v0.4+):**
+**Runtime notes (v0.5+):**
 
+- Lab-scale engineering KB: ~1000 chunks via `corpus/generate_ml_corpus.py`
+  (`python app.py --kb-stats`). Embeddings cache under `.vector_cache/`.
 - Live **responder is a `LoopNode`** whose **checker is live Galileo Protect**
   (`invoke_protect` / LLM-judge fallback) — not a keyword heuristic.
   Non-convergence → fleet `loop_non_converge` with Protect status/score/path.
@@ -62,7 +64,9 @@ Expect: pytest green, HITL interrupt→resume, node trace printed, Mermaid flowc
 - `data.*` channels **replace** by default (no silent `doc_ids` concat).
 - Real per-node checkpoints when you pass `checkpointer=` + `thread_id`.
 - `interrupt()` / `resume()` for human gates; `to_mermaid()` for docs.
-- Control plane: `python -m dizzygraph.control` (default port **8787**). Live Trinity fleet: `--trinity N` (keys required, no mock). Use-case status: [`GALILEO-DIZZYGRAPH-USE-CASES.md`](GALILEO-DIZZYGRAPH-USE-CASES.md).
+- Fail policies (`abort`/`continue`/`skip`), fleet admission (`DIZZY_MAX_INFLIGHT`),
+  `/api/readyz` + Prometheus text metrics.
+- Control plane: `python -m dizzygraph.control` (default port **8787**). Live Trinity fleet: `--trinity N` (keys required, no mock). Multi-worker: [`RUNBOOK-MULTI-WORKER.md`](RUNBOOK-MULTI-WORKER.md). Use-case status: [`GALILEO-DIZZYGRAPH-USE-CASES.md`](GALILEO-DIZZYGRAPH-USE-CASES.md).
 
 ---
 

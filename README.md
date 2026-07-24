@@ -256,7 +256,14 @@ python drills/xl6_model_regression.py
 python app.py --restore-corpus
 ```
 
-**Total LLM cost for all 6 drills: < $0.15** (small corpus, gpt-4o-mini).
+**Total LLM cost for all 6 drills: still low** (gpt-4o-mini; embeddings cached under `.vector_cache/` after first index build). Lab-scale corpus is ~1000 chunks — first embed is typically &lt; $0.05.
+
+Check corpus size anytime:
+
+```bash
+python app.py --kb-stats
+# or: python corpus/generate_ml_corpus.py --target 1000
+```
 
 ---
 
@@ -266,7 +273,11 @@ python app.py --restore-corpus
 Galileo/
 ├── README.md
 ├── app.py                           # LangGraph agent — the full stack
-├── knowledge_base.json              # Real ML-infra engineering corpus
+├── knowledge_base.json              # Lab-scale ML-platform corpus (~1000 chunks)
+├── corpus/
+│   ├── generate_ml_corpus.py        # Template generator (no LLM / no secrets)
+│   ├── ml_platform_kb.json          # Canonical generated KB (restore source)
+│   └── STATS.md                     # Doc/chunk counts by category
 ├── requirements.txt
 │
 ├── drills/
@@ -280,12 +291,12 @@ Galileo/
 ├── fleet/
 │   └── monitor.py                   # RUN-layer telemetry (psutil + heartbeat)
 │
+├── dizzygraph/                      # Loop-first runtime + control plane (v0.5)
+│
 └── docs/
+    ├── RUNBOOK-DIZZYGRAPH.md
+    ├── RUNBOOK-MULTI-WORKER.md      # Postgres/Redis multi-worker honesty
     └── screenshots/                 # Galileo Console captures from live run
-        ├── 01-galileo-project-overview.png
-        ├── 02-galileo-traces-list.png
-        ├── ...
-        └── 11-galileo-insights-clusters.png
 ```
 
 ---

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dizzygraph"
-version = "0.4.1"
-description = "Graphs made of loops — multi-agent control plane with Postgres/Redis, metrics, supervisor"
+version = "0.5.0"
+description = "Graphs made of loops — production-oriented runtime + multi-agent control plane (Postgres/Redis, metrics, supervisor)"
 readme = "dizzygraph/README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

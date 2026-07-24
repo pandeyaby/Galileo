@@ -1,4 +1,4 @@
-"""Graph execution: DAG / cyclic, stream, checkpoints, HITL, retries."""
+"""Graph execution: DAG / cyclic, stream, checkpoints, HITL, retries, fail policies."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from typing import Any
 from .callbacks import BaseCallbackHandler, FanoutCallbacks
 from .checkpoint import Checkpoint, Checkpointer, checkpoint_from_state
 from .events import StreamEvent
+from .fail_policy import FailPolicy, coerce_fail_policy
 from .graph import Graph
 from .interrupt import GraphInterrupt
 from .nodes import SubGraphNode
@@ -45,6 +46,8 @@ class ExecutionTrace:
     interrupt_node: str | None = None
     checkpoint_id: str | None = None
     thread_id: str | None = None
+    fail_policy: str = FailPolicy.CONTINUE.value
+    aborted: bool = False
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -58,6 +61,8 @@ class ExecutionTrace:
             "interrupt_node": self.interrupt_node,
             "checkpoint_id": self.checkpoint_id,
             "thread_id": self.thread_id,
+            "fail_policy": self.fail_policy,
+            "aborted": self.aborted,
         }
 
 
@@ -69,6 +74,7 @@ class GraphExecutor:
     - Cyclic: iterative frontier expansion with visit budgets.
     - Checkpoints after every node when a Checkpointer + thread_id are set.
     - ``stream()`` yields ``StreamEvent``s; ``run()`` drains the stream.
+    - ``fail_policy``: abort | continue | skip after node errors.
     """
 
     def __init__(
@@ -80,9 +86,12 @@ class GraphExecutor:
         checkpointer: Checkpointer | None = None,
         callbacks: list[BaseCallbackHandler] | None = None,
         default_retry: RetryPolicy | None = None,
-        fail_fast: bool = False,
+        fail_fast: bool | None = None,
+        fail_policy: FailPolicy | str | bool | None = None,
+        on_event=None,
         # legacy — called after each successful node if no Checkpointer
         checkpoint_fn=None,
+        nest_checkpointer: bool = True,
     ):
         self.graph = graph
         self.max_graph_iterations = max_graph_iterations
@@ -90,8 +99,13 @@ class GraphExecutor:
         self.checkpointer = checkpointer
         self.callbacks = FanoutCallbacks(list(callbacks or []))
         self.default_retry = default_retry
-        self.fail_fast = fail_fast
+        if fail_policy is None and fail_fast is not None:
+            fail_policy = fail_fast
+        self.fail_policy = coerce_fail_policy(fail_policy)
+        self.fail_fast = self.fail_policy is FailPolicy.ABORT
+        self.on_event = on_event
         self.checkpoint_fn = checkpoint_fn
+        self.nest_checkpointer = nest_checkpointer
         self._bind_subgraphs()
 
     def _bind_subgraphs(self) -> None:
@@ -104,10 +118,17 @@ class GraphExecutor:
             graph,
             max_graph_iterations=self.max_graph_iterations,
             parallel_branches=self.parallel_branches,
+            checkpointer=self.checkpointer if self.nest_checkpointer else None,
+            callbacks=list(self.callbacks.handlers) if self.callbacks.handlers else None,
             default_retry=self.default_retry,
-            fail_fast=self.fail_fast,
+            fail_policy=self.fail_policy,
+            on_event=self.on_event,
+            nest_checkpointer=self.nest_checkpointer,
         )
-        trace = nested.run(state)
+        thread_id = None
+        if self.nest_checkpointer and isinstance(state.metrics, dict):
+            thread_id = state.metrics.get("thread_id")
+        trace = nested.run(state, thread_id=thread_id)
         return trace.final_state or state
 
     def run(
@@ -139,7 +160,7 @@ class GraphExecutor:
         for w in warnings:
             log.info("validate: %s", w)
 
-        trace = ExecutionTrace(graph_id=self.graph.id, thread_id=thread_id)
+        trace = ExecutionTrace(graph_id=self.graph.id, thread_id=thread_id, fail_policy=self.fail_policy.value)
         t0 = time.perf_counter()
 
         frontier: list[str]
@@ -151,11 +172,13 @@ class GraphExecutor:
             if pending_cp and pending_cp.pending_interrupt is not None:
                 # Caller must use resume() — surface interrupt again
                 state = State.model_validate(pending_cp.state)
-                yield StreamEvent(
-                    type="interrupt",
-                    node_id=pending_cp.interrupt_node,
-                    data={"value": pending_cp.pending_interrupt, "hint": "call resume()"},
-                    state=state.model_dump(),
+                yield self._emit(
+                    StreamEvent(
+                        type="interrupt",
+                        node_id=pending_cp.interrupt_node,
+                        data={"value": pending_cp.pending_interrupt, "hint": "call resume()"},
+                        state=state.model_dump(),
+                    )
                 )
                 trace.interrupted = True
                 trace.interrupt_value = pending_cp.pending_interrupt
@@ -163,7 +186,9 @@ class GraphExecutor:
                 trace.checkpoint_id = pending_cp.checkpoint_id
                 trace.final_state = state
                 trace.total_duration_s = time.perf_counter() - t0
-                yield StreamEvent(type="graph_end", data={"trace": trace}, state=state.model_dump())
+                yield self._emit(
+                    StreamEvent(type="graph_end", data={"trace": trace}, state=state.model_dump())
+                )
                 return
             if pending_cp and pending_cp.next_nodes:
                 state = State.model_validate(pending_cp.state)
@@ -176,8 +201,11 @@ class GraphExecutor:
             state = state or State()
             frontier = list(self.graph.get_entry_nodes())
 
+        if thread_id:
+            state = merge_state(state, {"metrics": {"thread_id": thread_id}})
+
         self.callbacks.on_graph_start(self.graph.id, state)
-        yield StreamEvent(type="graph_start", state=state.model_dump())
+        yield self._emit(StreamEvent(type="graph_start", state=state.model_dump()))
 
         layers = self.graph.topological_layers()
         use_dag = layers is not None and not self.graph.detect_cycles() and not pending_cp
@@ -192,6 +220,9 @@ class GraphExecutor:
                     if event.type == "interrupt":
                         trace.interrupted = True
                         break
+                    if event.type == "graph_abort":
+                        trace.aborted = True
+                        break
                 trace.graph_iterations = 1
             else:
                 for event in self._stream_cyclic(state, frontier, trace, thread_id, visits):
@@ -201,15 +232,20 @@ class GraphExecutor:
                     if event.type == "interrupt":
                         trace.interrupted = True
                         break
+                    if event.type == "graph_abort":
+                        trace.aborted = True
+                        break
         finally:
             trace.final_state = state
             trace.total_duration_s = time.perf_counter() - t0
             self.callbacks.on_graph_end(self.graph.id, state, trace.total_duration_s)
 
-        yield StreamEvent(
-            type="graph_end",
-            data={"trace": trace},
-            state=state.model_dump() if state else None,
+        yield self._emit(
+            StreamEvent(
+                type="graph_end",
+                data={"trace": trace},
+                state=state.model_dump() if state else None,
+            )
         )
 
     def resume(
@@ -245,6 +281,11 @@ class GraphExecutor:
 
     def _emit(self, event: StreamEvent) -> StreamEvent:
         self.callbacks.on_event(event)
+        if self.on_event is not None:
+            try:
+                self.on_event(event)
+            except Exception:  # noqa: BLE001 — hooks must not kill the run
+                log.exception("on_event hook failed")
         return event
 
     def _save_cp(
@@ -279,7 +320,8 @@ class GraphExecutor:
         node_id: str,
         state: State,
         trace: ExecutionTrace,
-    ) -> tuple[State, list[StreamEvent], GraphInterrupt | None]:
+    ) -> tuple[State, list[StreamEvent], GraphInterrupt | None, bool]:
+        """Returns (state, events, interrupt|None, skip_successors)."""
         node = self.graph.nodes[node_id]
         before = state.model_dump()
         events: list[StreamEvent] = []
@@ -291,6 +333,7 @@ class GraphExecutor:
         attempts = 0
         err: str | None = None
         out = state
+        skip_successors = False
         t0 = time.perf_counter()
 
         def once() -> State:
@@ -334,7 +377,7 @@ class GraphExecutor:
                     )
                 )
             )
-            return state, events, gi
+            return state, events, gi, False
         except Exception as exc:
             err = f"{type(exc).__name__}: {exc}"
             log.exception("Node %s failed", node_id)
@@ -342,9 +385,31 @@ class GraphExecutor:
             events.append(
                 self._emit(StreamEvent(type="node_error", node_id=node_id, error=err))
             )
-            if self.fail_fast:
+            if self.fail_policy is FailPolicy.ABORT:
+                events.append(
+                    self._emit(
+                        StreamEvent(
+                            type="graph_abort",
+                            node_id=node_id,
+                            error=err,
+                            data={"fail_policy": self.fail_policy.value},
+                        )
+                    )
+                )
                 raise
             out = merge_state(state, {"error": err})
+            if self.fail_policy is FailPolicy.SKIP:
+                skip_successors = True
+                events.append(
+                    self._emit(
+                        StreamEvent(
+                            type="node_skip",
+                            node_id=node_id,
+                            error=err,
+                            data={"fail_policy": "skip"},
+                        )
+                    )
+                )
 
         dur = time.perf_counter() - t0
         loop_count = None
@@ -376,7 +441,7 @@ class GraphExecutor:
         )
         events.append(StreamEvent(type="values", node_id=node_id, state=out.model_dump()))
         log.info("ran %-20s  %.3fs  loop=%s attempts=%s", node_id, dur, loop_count, attempts)
-        return out, events, None
+        return out, events, None, skip_successors
 
     def _stream_dag(
         self,
@@ -409,7 +474,7 @@ class GraphExecutor:
                         yield StreamEvent(type="values", state=state.model_dump())
             else:
                 for nid in layer:
-                    state, events, gi = self._run_node(nid, state, trace)
+                    state, events, gi, skip = self._run_node(nid, state, trace)
                     if gi is not None:
                         trace.interrupted = True
                         trace.interrupt_value = gi.value
@@ -439,6 +504,8 @@ class GraphExecutor:
                         return
                     for ev in events:
                         yield ev
+                        if ev.type == "graph_abort":
+                            return
                     remaining = [n for n in remaining if n != nid]
                     visits[nid] = visits.get(nid, 0) + 1
                     cp = self._save_cp(thread_id, state, remaining, dict(trace.cycle_visits))
@@ -451,7 +518,7 @@ class GraphExecutor:
                                 data={"checkpoint_id": cp.checkpoint_id},
                             )
                         )
-                    if state.done:
+                    if state.done or skip:
                         return
         if self.checkpoint_fn:
             self.checkpoint_fn(state, trace)
@@ -467,7 +534,7 @@ class GraphExecutor:
         def one(nid: str) -> tuple[str, State, list[StreamEvent], NodeTrace | None, Exception | None]:
             local_trace = ExecutionTrace(graph_id=self.graph.id)
             try:
-                out, events, gi = self._run_node(nid, state.model_copy(deep=True), local_trace)
+                out, events, gi, _skip = self._run_node(nid, state.model_copy(deep=True), local_trace)
                 if gi is not None:
                     return nid, out, events, None, gi
                 nt = local_trace.node_traces[-1] if local_trace.node_traces else None
@@ -502,7 +569,7 @@ class GraphExecutor:
             if trace.cycle_visits.get(node_id, 0) >= self.max_graph_iterations:
                 log.warning("skip %s — visit budget exhausted", node_id)
                 continue
-            state, events, gi = self._run_node(node_id, state, trace)
+            state, events, gi, skip = self._run_node(node_id, state, trace)
             if gi is not None:
                 trace.interrupted = True
                 trace.interrupt_value = gi.value
@@ -532,11 +599,14 @@ class GraphExecutor:
                 return
             for ev in events:
                 yield ev
+                if ev.type == "graph_abort":
+                    return
             if state.done:
                 break
-            for nxt in self.graph.successors(node_id, state):
-                if trace.cycle_visits.get(nxt, 0) < self.max_graph_iterations:
-                    frontier.append(nxt)
+            if not skip:
+                for nxt in self.graph.successors(node_id, state):
+                    if trace.cycle_visits.get(nxt, 0) < self.max_graph_iterations:
+                        frontier.append(nxt)
             cp = self._save_cp(thread_id, state, list(frontier), dict(trace.cycle_visits))
             if cp:
                 trace.checkpoint_id = cp.checkpoint_id

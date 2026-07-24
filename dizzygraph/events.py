@@ -8,10 +8,12 @@ from typing import Any, Literal
 EventType = Literal[
     "graph_start",
     "graph_end",
+    "graph_abort",
     "node_start",
     "node_end",
     "node_retry",
     "node_error",
+    "node_skip",
     "checkpoint",
     "interrupt",
     "values",

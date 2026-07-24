@@ -14,6 +14,7 @@ from ..compile import CompiledGraph, compile_graph
 from ..events import StreamEvent
 from ..graph import Graph
 from ..viz import to_mermaid
+from .admission import AdmissionController, AdmissionRejected
 from .alerts import AlertEngine
 from .bus import EventBus
 from .sqlite_checkpointer import SqliteCheckpointer
@@ -22,12 +23,23 @@ from .supervisor import Supervisor
 log = logging.getLogger("dizzygraph.control.runtime")
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 class FleetRuntime:
     def __init__(
         self,
         store,
         *,
         max_workers: int = 32,
+        max_inflight: int | None = None,
         stuck_after_s: float = 30.0,
         redis_url: str | None = None,
         default_tenant: str = "default",
@@ -41,7 +53,10 @@ class FleetRuntime:
         self.supervisor = Supervisor(self)
         self._graphs: dict[str, Graph] = {}
         self._compiled: dict[str, CompiledGraph] = {}
-        self._pool = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="fleet")
+        workers = max(1, max_workers)
+        self._pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="fleet")
+        ceiling = max_inflight if max_inflight is not None else _env_int("DIZZY_MAX_INFLIGHT", workers * 2)
+        self.admission = AdmissionController(max_inflight=max(1, ceiling))
         self._futures: dict[str, Future] = {}
         self._lock = threading.Lock()
         self._thread_tenant: dict[str, str] = {}
@@ -55,6 +70,46 @@ class FleetRuntime:
         self.bus.close()
         self.store.close()
 
+    def health(self) -> dict[str, Any]:
+        """Dependency + capacity snapshot for /api/health and /api/readyz."""
+        checks: dict[str, Any] = {}
+        ok = True
+        try:
+            if hasattr(self.store, "ping"):
+                self.store.ping()
+            else:
+                self.store.fleet_summary(tenant_id=self.default_tenant)
+            checks["store"] = {"ok": True, "backend": getattr(self.store, "backend", "unknown")}
+        except Exception as exc:  # noqa: BLE001
+            ok = False
+            checks["store"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        redis_url = getattr(self.bus, "redis_url", None)
+        if redis_url:
+            try:
+                client = getattr(self.bus, "_redis", None)
+                if client is not None:
+                    client.ping()
+                    checks["redis"] = {"ok": True}
+                else:
+                    checks["redis"] = {"ok": True, "note": "configured but client lazy"}
+            except Exception as exc:  # noqa: BLE001
+                ok = False
+                checks["redis"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        else:
+            checks["redis"] = {"ok": True, "enabled": False}
+        adm = self.admission.snapshot()
+        saturated = adm["inflight"] >= adm["max_inflight"]
+        checks["admission"] = {**adm, "saturated": saturated}
+        return {
+            "ok": ok,
+            "ready": ok and not saturated,
+            "backend": getattr(self.store, "backend", "unknown"),
+            "checks": checks,
+            "fleet": self.store.fleet_summary(tenant_id=self.default_tenant)
+            if checks.get("store", {}).get("ok")
+            else {},
+        }
+
     def register_graph(self, graph: Graph, *, tenant_id: str | None = None) -> str:
         tenant_id = tenant_id or self.default_tenant
         gid = graph.id
@@ -63,6 +118,7 @@ class FleetRuntime:
             graph,
             checkpointer=self.checkpointer,
             max_graph_iterations=32,
+            fail_policy="continue",
         )
         self.store.upsert_graph(
             gid,
@@ -88,6 +144,7 @@ class FleetRuntime:
     ) -> str:
         if graph_id not in self._compiled:
             raise KeyError(f"Unknown graph_id={graph_id}")
+        self.admission.acquire(block=False)
         tenant_id = tenant_id or self.default_tenant
         tid = thread_id or f"agent-{uuid.uuid4().hex[:10]}"
         self._thread_tenant[tid] = tenant_id
@@ -118,6 +175,7 @@ class FleetRuntime:
         run = self.store.get_run(thread_id, tenant_id=tenant_id)
         if not run:
             raise KeyError(thread_id)
+        self.admission.acquire(block=False)
         tenant_id = tenant_id or run.get("tenant_id") or self.default_tenant
         graph_id = run["graph_id"]
         self._thread_tenant[thread_id] = tenant_id
@@ -134,6 +192,19 @@ class FleetRuntime:
         return self.supervisor.fan_out(**kwargs)
 
     def _execute(
+        self,
+        thread_id: str,
+        graph_id: str,
+        initial: Any,
+        agent_name: str,
+        tenant_id: str,
+    ) -> None:
+        try:
+            self._execute_inner(thread_id, graph_id, initial, agent_name, tenant_id)
+        finally:
+            self.admission.release()
+
+    def _execute_inner(
         self,
         thread_id: str,
         graph_id: str,
@@ -206,6 +277,14 @@ class FleetRuntime:
             )
 
     def _resume(
+        self, thread_id: str, graph_id: str, update: dict | None, tenant_id: str
+    ) -> None:
+        try:
+            self._resume_inner(thread_id, graph_id, update, tenant_id)
+        finally:
+            self.admission.release()
+
+    def _resume_inner(
         self, thread_id: str, graph_id: str, update: dict | None, tenant_id: str
     ) -> None:
         app = self._compiled[graph_id]

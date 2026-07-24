@@ -116,6 +116,11 @@ class PostgresStore:
                 cur.execute(PG_SCHEMA)
             self._conn.commit()
 
+    def ping(self) -> None:
+        with self._lock:
+            with self._conn.cursor() as cur:
+                cur.execute("SELECT 1")
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()
@@ -339,6 +344,45 @@ class PostgresStore:
             "interrupt_node": d["interrupt_node"],
             "created_at": d["created_at"],
         }
+
+
+    def list_checkpoints(self, thread_id, *, limit: int = 50):
+        with self._lock:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM checkpoints WHERE thread_id=%s ORDER BY id DESC LIMIT %s",
+                    (thread_id, limit),
+                )
+                rows = cur.fetchall()
+        out = []
+        for row in rows:
+            d = dict(row)
+            out.append(
+                {
+                    "tenant_id": d.get("tenant_id", "default"),
+                    "thread_id": d["thread_id"],
+                    "checkpoint_id": d["checkpoint_id"],
+                    "graph_id": d["graph_id"],
+                    "state": json.loads(d["state_json"]),
+                    "next_nodes": json.loads(d["next_nodes_json"]),
+                    "visits": json.loads(d["visits_json"]),
+                    "pending_interrupt": json.loads(d["pending_interrupt_json"])
+                    if d["pending_interrupt_json"]
+                    else None,
+                    "interrupt_node": d["interrupt_node"],
+                    "created_at": d["created_at"],
+                }
+            )
+        return out
+
+    def clear_checkpoints(self, thread_id) -> int:
+        with self._lock:
+            with self._conn.cursor() as cur:
+                cur.execute("DELETE FROM checkpoints WHERE thread_id=%s", (thread_id,))
+                n = cur.rowcount
+            self._conn.commit()
+        return int(n or 0)
+
 
     def append_event(
         self,

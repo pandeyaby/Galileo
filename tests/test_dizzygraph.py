@@ -157,3 +157,61 @@ def test_mermaid_contains_nodes():
     text = to_mermaid(g)
     assert "flowchart TD" in text
     assert "a" in text
+
+
+def test_fail_policy_continue_records_error():
+    def boom(s: State):
+        raise RuntimeError("nope")
+
+    def after(s: State):
+        return {"data": {"after": True}, "done": True}
+
+    g = Graph(id="fc")
+    g.add_node(AtomicNode(id="a", fn=boom))
+    g.add_node(AtomicNode(id="b", fn=after))
+    g.set_entry("a").add_edge("a", "b")
+    app = g.compile(fail_policy="continue")
+    trace = app.invoke(State())
+    assert trace.final_state is not None
+    assert "nope" in (trace.final_state.error or "")
+    assert "b" in [t.node_id for t in trace.node_traces]
+
+
+def test_fail_policy_skip_stops_successors():
+    def boom(s: State):
+        raise RuntimeError("nope")
+
+    def after(s: State):
+        return {"data": {"after": True}, "done": True}
+
+    g = Graph(id="fs")
+    g.add_node(AtomicNode(id="a", fn=boom))
+    g.add_node(AtomicNode(id="b", fn=after))
+    g.set_entry("a").add_edge("a", "b")
+    app = g.compile(fail_policy="skip")
+    trace = app.invoke(State())
+    assert "b" not in [t.node_id for t in trace.node_traces]
+    types = [e.type for e in g.compile(fail_policy="skip").stream(State())]
+    assert "node_skip" in types
+
+
+def test_fail_policy_abort_raises():
+    g = Graph(id="fa")
+    g.add_node(AtomicNode(id="a", fn=lambda s: (_ for _ in ()).throw(RuntimeError("x"))))
+    g.set_entry("a")
+    app = g.compile(fail_fast=True)
+    with pytest.raises(RuntimeError):
+        app.invoke(State())
+
+
+def test_compile_get_config_and_on_event():
+    seen = []
+    g = Graph(id="cfg")
+    g.add_node(AtomicNode(id="a", fn=lambda s: {"done": True}))
+    g.set_entry("a")
+    app = g.compile(fail_policy="continue", on_event=lambda e: seen.append(e.type))
+    cfg = app.get_config()
+    assert cfg["fail_policy"] == "continue"
+    assert cfg["graph_id"] == "cfg"
+    app.invoke(State())
+    assert "graph_start" in seen and "graph_end" in seen

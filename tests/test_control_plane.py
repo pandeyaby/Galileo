@@ -160,3 +160,49 @@ def test_api_fleet_metrics_fanout(runtime):
     detail = client.get(f"/api/runs/{fan.json()['parent_thread_id']}").json()
     assert "path" in detail
     assert detail["run"]["status"] in {"succeeded", "interrupted", "failed"}
+
+def test_admission_rejects_when_saturated(tmp_path):
+    from dizzygraph.control.admission import AdmissionRejected
+
+    store = ControlStore(tmp_path / "adm.db")
+    rt = FleetRuntime(store, max_workers=1, max_inflight=1, stuck_after_s=2.0)
+    ensure_demo_graph(rt)
+    # Hold the single slot
+    assert rt.admission.try_acquire() is True
+    with pytest.raises(AdmissionRejected):
+        rt.start_run(graph_id="fleet-demo", initial={"query": "q", "agent_ix": 0})
+    rt.admission.release()
+    tid = rt.start_run(graph_id="fleet-demo", initial={"query": "q", "agent_ix": 0})
+    _wait_terminal(rt, [tid])
+    rt.close()
+
+
+def test_health_readyz_and_checkpoint_history(runtime):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from dizzygraph.control.api import create_app
+
+    snap = runtime.health()
+    assert snap["ok"] is True
+    assert "admission" in snap["checks"]
+
+    app = create_app(runtime)
+    client = TestClient(app)
+    h = client.get("/api/health").json()
+    assert h["ok"] is True
+    assert "version" in h
+    assert client.get("/api/livez").json()["ok"] is True
+    assert client.get("/api/readyz").status_code == 200
+    prom = client.get("/api/metrics/prometheus")
+    assert prom.status_code == 200
+    assert "dizzy_admission_inflight" in prom.text
+
+    tid = runtime.start_run(
+        graph_id="fleet-demo",
+        initial={"query": "cp", "agent_ix": 1},
+    )
+    _wait_terminal(runtime, [tid])
+    history = runtime.checkpointer.list(tid)
+    assert len(history) >= 1
+    assert runtime.store.list_checkpoints(tid)

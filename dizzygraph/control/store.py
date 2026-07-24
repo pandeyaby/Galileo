@@ -162,6 +162,11 @@ class ControlStore:
             except sqlite3.OperationalError:
                 pass
 
+    def ping(self) -> None:
+        """Lightweight readiness probe (raises on failure)."""
+        with self._lock:
+            self._conn.execute("SELECT 1").fetchone()
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()
@@ -403,6 +408,46 @@ class ControlStore:
             "interrupt_node": d["interrupt_node"],
             "created_at": d["created_at"],
         }
+
+
+    def list_checkpoints(self, thread_id: str, *, limit: int = 50) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT * FROM checkpoints WHERE thread_id=?
+                ORDER BY id DESC LIMIT ?
+                """,
+                (thread_id, limit),
+            ).fetchall()
+        out = []
+        for row in rows:
+            d = dict(row)
+            out.append(
+                {
+                    "tenant_id": d.get("tenant_id", "default"),
+                    "thread_id": d["thread_id"],
+                    "checkpoint_id": d["checkpoint_id"],
+                    "graph_id": d["graph_id"],
+                    "state": json.loads(d["state_json"]),
+                    "next_nodes": json.loads(d["next_nodes_json"]),
+                    "visits": json.loads(d["visits_json"]),
+                    "pending_interrupt": json.loads(d["pending_interrupt_json"])
+                    if d["pending_interrupt_json"]
+                    else None,
+                    "interrupt_node": d["interrupt_node"],
+                    "created_at": d["created_at"],
+                }
+            )
+        return out
+
+    def clear_checkpoints(self, thread_id: str) -> int:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM checkpoints WHERE thread_id=?",
+                (thread_id,),
+            )
+            self._conn.commit()
+            return int(cur.rowcount or 0)
 
     # ── events ────────────────────────────────────────────────────────────
 

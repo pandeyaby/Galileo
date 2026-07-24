@@ -30,6 +30,7 @@ from .executor import GraphExecutor, ExecutionTrace, NodeTrace
 from .compile import CompiledGraph, compile_graph
 from .meta import MetaLoopExecutor, MetaLoopResult
 from .checkpoint import Checkpointer, MemoryCheckpointer, FileCheckpointer, Checkpoint
+from .fail_policy import FailPolicy, coerce_fail_policy
 from .interrupt import interrupt, GraphInterrupt
 from .retry import RetryPolicy
 from .events import StreamEvent
@@ -87,6 +88,8 @@ __all__ = [
     "MemoryCheckpointer",
     "FileCheckpointer",
     "Checkpoint",
+    "FailPolicy",
+    "coerce_fail_policy",
     "interrupt",
     "GraphInterrupt",
     "RetryPolicy",
@@ -115,4 +118,4 @@ __all__ = [
     "load_state",
 ]
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"

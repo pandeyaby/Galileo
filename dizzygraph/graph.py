@@ -152,9 +152,12 @@ class Graph(BaseModel):
         default_retry=None,
         parallel_branches: bool = False,
         max_graph_iterations: int = 32,
-        fail_fast: bool = False,
+        fail_fast: bool | None = None,
+        fail_policy=None,
+        on_event=None,
+        nest_checkpointer: bool = True,
     ):
-        """Return a ``CompiledGraph`` (invoke / stream / resume)."""
+        """Return a ``CompiledGraph`` (invoke / stream / resume / get_config)."""
         from .compile import compile_graph
 
         return compile_graph(
@@ -165,6 +168,9 @@ class Graph(BaseModel):
             parallel_branches=parallel_branches,
             max_graph_iterations=max_graph_iterations,
             fail_fast=fail_fast,
+            fail_policy=fail_policy,
+            on_event=on_event,
+            nest_checkpointer=nest_checkpointer,
         )
 
     def to_mermaid(self) -> str:

@@ -71,7 +71,12 @@ def _key_id(key: str) -> str:
 def bind_auth(app, registry: AuthRegistry) -> None:
     @app.middleware("http")
     async def tenant_middleware(request: Request, call_next):
-        if request.url.path.startswith("/static") or request.url.path in {"/", "/api/health"}:
+        if request.url.path.startswith("/static") or request.url.path in {
+            "/",
+            "/api/health",
+            "/api/livez",
+            "/api/readyz",
+        }:
             request.state.tenant = TenantContext(tenant_id="default")
             return await call_next(request)
         api_key = request.headers.get("x-api-key") or request.query_params.get("api_key")

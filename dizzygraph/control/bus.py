@@ -24,6 +24,7 @@ class EventBus:
         self._origin_id = uuid.uuid4().hex
         self._stop = threading.Event()
         url = redis_url or os.environ.get("DIZZY_REDIS_URL") or os.environ.get("REDIS_URL")
+        self.redis_url = url
         if url:
             self._init_redis(url)
 

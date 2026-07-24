@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .auth import AuthRegistry, bind_auth, tenant_from_request
+from .admission import AdmissionRejected
 from .runtime import FleetRuntime
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -62,7 +63,9 @@ class MetaRegressionRequest(BaseModel):
 
 
 def create_app(runtime: FleetRuntime, *, auth: AuthRegistry | None = None) -> FastAPI:
-    app = FastAPI(title="DizzyGraph Control Plane", version="0.4.0")
+    from dizzygraph import __version__ as dg_version
+
+    app = FastAPI(title="DizzyGraph Control Plane", version=dg_version)
     registry = auth or AuthRegistry()
     bind_auth(app, registry)
     store = runtime.store
@@ -72,12 +75,60 @@ def create_app(runtime: FleetRuntime, *, auth: AuthRegistry | None = None) -> Fa
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
+        snap = runtime.health()
         return {
-            "ok": True,
-            "backend": getattr(store, "backend", "sqlite"),
+            "ok": snap.get("ok", True),
+            "version": dg_version,
+            "backend": snap.get("backend", getattr(store, "backend", "sqlite")),
             "auth_required": registry.required,
-            "fleet": store.fleet_summary(tenant_id="default"),
+            "checks": snap.get("checks", {}),
+            "admission": snap.get("checks", {}).get("admission", {}),
+            "fleet": snap.get("fleet") or store.fleet_summary(tenant_id="default"),
         }
+
+    @app.get("/api/livez")
+    def livez() -> dict[str, Any]:
+        return {"ok": True, "version": dg_version}
+
+    @app.get("/api/readyz")
+    def readyz() -> dict[str, Any]:
+        snap = runtime.health()
+        ready = bool(snap.get("ready"))
+        if not ready:
+            raise HTTPException(status_code=503, detail=snap)
+        return {"ok": True, "ready": True, "version": dg_version, "checks": snap.get("checks", {})}
+
+    @app.get("/api/metrics/prometheus")
+    def metrics_prometheus(request: Request) -> StreamingResponse:
+        """OpenMetrics-ish text exposition of fleet rollup + admission."""
+        tenant = tid(request)
+        rollup = store.metrics_rollup(tenant_id=tenant)
+        adm = runtime.admission.snapshot()
+        lines = [
+            "# HELP dizzy_fleet_runs Fleet run counts by status",
+            "# TYPE dizzy_fleet_runs gauge",
+        ]
+        summary = store.fleet_summary(tenant_id=tenant)
+        for status, n in summary.items():
+            if status == "open_alerts":
+                lines.append(f'dizzy_fleet_open_alerts{{tenant="{tenant}"}} {n}')
+            else:
+                lines.append(f'dizzy_fleet_runs{{tenant="{tenant}",status="{status}"}} {n}')
+        lines.extend(
+            [
+                "# HELP dizzy_admission_inflight In-flight admitted runs",
+                "# TYPE dizzy_admission_inflight gauge",
+                f"dizzy_admission_inflight {adm['inflight']}",
+                f"dizzy_admission_max_inflight {adm['max_inflight']}",
+                f"dizzy_admission_rejected_total {adm['rejected']}",
+                "# HELP dizzy_run_lag_p95_seconds Recent run lag p95",
+                "# TYPE dizzy_run_lag_p95_seconds gauge",
+                f"dizzy_run_lag_p95_seconds {float(rollup.get('lag_p95') or 0)}",
+                f"dizzy_fail_rate {float(rollup.get('fail_rate') or 0)}",
+                "",
+            ]
+        )
+        return StreamingResponse(iter(["\n".join(lines)]), media_type="text/plain; version=0.0.4")
 
     @app.get("/api/fleet")
     def fleet(request: Request) -> dict[str, Any]:
@@ -88,6 +139,7 @@ def create_app(runtime: FleetRuntime, *, auth: AuthRegistry | None = None) -> Fa
             "metrics": store.metrics_rollup(tenant_id=tenant),
             "runs": store.list_runs(tenant_id=tenant, limit=300),
             "alerts": store.list_alerts(tenant_id=tenant, open_only=True, limit=50),
+            "admission": runtime.admission.snapshot(),
         }
 
     @app.get("/api/metrics")
@@ -96,6 +148,7 @@ def create_app(runtime: FleetRuntime, *, auth: AuthRegistry | None = None) -> Fa
         return {
             "tenant_id": tenant,
             "rollup": store.metrics_rollup(tenant_id=tenant),
+            "admission": runtime.admission.snapshot(),
             "series": {
                 "run_lag_s": store.query_metrics(
                     tenant_id=tenant, name="run_lag_s", since_s=since_s
@@ -162,6 +215,16 @@ def create_app(runtime: FleetRuntime, *, auth: AuthRegistry | None = None) -> Fa
             )
         except KeyError as exc:
             raise HTTPException(404, str(exc)) from exc
+        except AdmissionRejected as exc:
+            raise HTTPException(
+                429,
+                {
+                    "error": "admission_rejected",
+                    "reason": exc.reason,
+                    "inflight": exc.inflight,
+                    "max_inflight": exc.max_inflight,
+                },
+            ) from exc
         return {"thread_id": thread}
 
     @app.post("/api/runs/{thread_id}/resume")
@@ -170,6 +233,16 @@ def create_app(runtime: FleetRuntime, *, auth: AuthRegistry | None = None) -> Fa
             runtime.resume_run(thread_id, update=body.update, tenant_id=tid(request))
         except KeyError as exc:
             raise HTTPException(404, str(exc)) from exc
+        except AdmissionRejected as exc:
+            raise HTTPException(
+                429,
+                {
+                    "error": "admission_rejected",
+                    "reason": exc.reason,
+                    "inflight": exc.inflight,
+                    "max_inflight": exc.max_inflight,
+                },
+            ) from exc
         return {"thread_id": thread_id}
 
     @app.post("/api/supervisor/fanout")

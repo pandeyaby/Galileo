@@ -44,6 +44,8 @@ class FleetRuntime:
         self._futures: dict[str, Future] = {}
         self._lock = threading.Lock()
         self._thread_tenant: dict[str, str] = {}
+        # Optional OTel tracers keyed by thread_id (real SDK spans, not just span_name metadata)
+        self._otel_tracers: dict[str, Any] = {}
 
     def close(self) -> None:
         self.alerts.stop()
@@ -151,6 +153,7 @@ class FleetRuntime:
             payload={"agent_name": agent_name},
         )
         try:
+            self._otel_begin(thread_id, graph_id, tenant_id, initial)
             for event in app.stream(initial, thread_id=thread_id):
                 self._handle_event(thread_id, graph_id, event, tenant_id)
             run = self.store.get_run(thread_id, tenant_id=tenant_id)
@@ -174,6 +177,7 @@ class FleetRuntime:
                 value=time.time() - t0,
                 labels={"graph_id": graph_id, "thread_id": thread_id},
             )
+            self._otel_end(thread_id, graph_id, duration_s=time.time() - t0, error=None)
         except Exception as exc:
             log.exception("run failed %s", thread_id)
             self.store.upsert_run(
@@ -195,6 +199,9 @@ class FleetRuntime:
                 name="run_failed",
                 value=1.0,
                 labels={"graph_id": graph_id},
+            )
+            self._otel_end(
+                thread_id, graph_id, duration_s=time.time() - t0, error=f"{type(exc).__name__}: {exc}"
             )
 
     def _resume(
@@ -297,7 +304,7 @@ class FleetRuntime:
                 current_node=event.node_id,
             )
             self.store.append_path_step(thread_id, event.node_id, tenant_id=tenant_id)
-            # Path ↔ OTel-ish span correlation (pragmatic v1)
+            # Path ↔ OTel span correlation (+ real SDK export when DizzyGraphTracer attached)
             payload["span"] = {
                 "name": f"dizzygraph.{event.node_id}",
                 "otel.span_name": f"dizzygraph.{event.node_id}",
@@ -306,6 +313,7 @@ class FleetRuntime:
                 "scope": "dizzygraph",
                 "path_step": event.node_id,
             }
+            self._otel_node_start(thread_id, event.node_id)
         elif event.type == "node_end" and event.node_id:
             payload["span"] = {
                 "name": f"dizzygraph.{event.node_id}",
@@ -317,6 +325,9 @@ class FleetRuntime:
                 "duration_s": event.duration_s,
                 "status": "error" if event.error else "ok",
             }
+            self._otel_node_end(thread_id, event.node_id, duration_s=event.duration_s, error=event.error)
+        elif event.type == "node_error" and event.node_id:
+            self._otel_node_error(thread_id, event.node_id, event.error or "node_error")
         elif event.type == "interrupt":
             self.store.upsert_run(
                 tenant_id=tenant_id,
@@ -408,3 +419,91 @@ class FleetRuntime:
         except Exception as exc:
             log.debug("galileo flush hook skipped: %s", type(exc).__name__)
             return None
+
+    # --- OpenTelemetry SDK export (optional; soft-import) ---
+
+    def _otel_begin(
+        self, thread_id: str, graph_id: str, tenant_id: str, initial: Any
+    ) -> None:
+        try:
+            from ..otel import DizzyGraphTracer, otel_enabled, setup_galileo_tracer_provider
+            from .tenant_projects import resolve_galileo_target
+            from ..state import State as DGState
+
+            if not otel_enabled():
+                return
+            target = resolve_galileo_target(tenant_id)
+            try:
+                setup_galileo_tracer_provider(
+                    project=target["project"], log_stream=target["log_stream"]
+                )
+            except ImportError:
+                # OTel API/SDK present but Galileo processor missing — still export locally
+                pass
+            state = initial if isinstance(initial, DGState) else None
+            if state is None and isinstance(initial, dict):
+                state = DGState(data=dict(initial)) if "data" not in initial else DGState.model_validate(initial)
+            tracer = DizzyGraphTracer(thread_id=thread_id, tenant_id=tenant_id)
+            tracer.on_graph_start(graph_id, state)
+            with self._lock:
+                self._otel_tracers[thread_id] = tracer
+        except Exception as exc:
+            log.debug("otel begin skipped: %s", type(exc).__name__)
+
+    def _otel_end(
+        self,
+        thread_id: str,
+        graph_id: str,
+        *,
+        duration_s: float,
+        error: str | None,
+    ) -> None:
+        with self._lock:
+            tracer = self._otel_tracers.pop(thread_id, None)
+        if tracer is None:
+            return
+        try:
+            from ..state import State as DGState
+
+            st = DGState(error=error) if error else None
+            tracer.on_graph_end(graph_id, st, duration_s)
+            tracer.force_flush()
+        except Exception as exc:
+            log.debug("otel end skipped: %s", type(exc).__name__)
+
+    def _otel_node_start(self, thread_id: str, node_id: str) -> None:
+        tracer = self._otel_tracers.get(thread_id)
+        if tracer is None:
+            return
+        try:
+            tracer.on_node_start(node_id, None)
+        except Exception as exc:
+            log.debug("otel node_start skipped: %s", type(exc).__name__)
+
+    def _otel_node_end(
+        self,
+        thread_id: str,
+        node_id: str,
+        *,
+        duration_s: float | None,
+        error: str | None,
+    ) -> None:
+        tracer = self._otel_tracers.get(thread_id)
+        if tracer is None:
+            return
+        try:
+            from ..state import State as DGState
+
+            st = DGState(error=error) if error else None
+            tracer.on_node_end(node_id, st, float(duration_s or 0.0))
+        except Exception as exc:
+            log.debug("otel node_end skipped: %s", type(exc).__name__)
+
+    def _otel_node_error(self, thread_id: str, node_id: str, error: str) -> None:
+        tracer = self._otel_tracers.get(thread_id)
+        if tracer is None:
+            return
+        try:
+            tracer.on_node_error(node_id, error)
+        except Exception as exc:
+            log.debug("otel node_error skipped: %s", type(exc).__name__)

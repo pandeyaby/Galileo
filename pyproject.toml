@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dizzygraph"
-version = "0.4.0"
+version = "0.4.1"
 description = "Graphs made of loops — multi-agent control plane with Postgres/Redis, metrics, supervisor"
 readme = "dizzygraph/README.md"
 requires-python = ">=3.10"
@@ -26,6 +26,11 @@ control-full = [
   "httpx>=0.27",
   "psycopg[binary]>=3.1",
   "redis>=5.0",
+]
+otel = [
+  "opentelemetry-api>=1.27",
+  "opentelemetry-sdk>=1.27",
+  "galileo[otel]>=2.3.0",
 ]
 dev = ["pytest>=8.0", "httpx>=0.27"]
 

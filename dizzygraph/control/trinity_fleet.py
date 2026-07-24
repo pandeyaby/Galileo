@@ -68,8 +68,12 @@ GALILEO_USE_CASES = [
     {
         "id": "otel-path-correlate",
         "title": "Path overlay ↔ OTel/Galileo spans",
-        "layer": "path_steps + events",
-        "why": "Fleet path_steps align to span names dizzygraph.<node>; flush uses tenant project map",
+        "layer": "path_steps + events + OTel SDK",
+        "why": (
+            "Fleet path_steps align to span names dizzygraph.<node>; "
+            "optional DizzyGraphTracer exports real OTel spans (GalileoSpanProcessor); "
+            "flush uses tenant project map"
+        ),
         "status": "shipped",
     },
 ]

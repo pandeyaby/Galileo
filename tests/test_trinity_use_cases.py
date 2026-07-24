@@ -311,6 +311,49 @@ def test_flush_fleet_uses_tenant_mapping(monkeypatch):
     assert spans == ["dizzygraph.intake", "dizzygraph.responder", "dizzygraph.protect"]
 
 
+def test_otel_callback_exports_node_spans(monkeypatch):
+    """OpenTelemetryCallback emits real SDK spans named dizzygraph.<node>."""
+    pytest.importorskip("opentelemetry.sdk")
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    from dizzygraph.otel import OpenTelemetryCallback
+
+    monkeypatch.setenv("DIZZY_OTEL", "1")
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
+
+    g = Graph(id="otel-demo", name="otel")
+    g.add_node(AtomicNode(id="alpha", fn=lambda s: {"data": {"x": 1}}))
+    g.add_node(AtomicNode(id="beta", fn=lambda s: {"done": True}))
+    g.set_entry("alpha")
+    g.add_edge("alpha", "beta")
+    app = g.compile(callbacks=[OpenTelemetryCallback(thread_id="t-otel")])
+    trace_result = app.invoke(State(data={"query": "otel"}))
+    assert not trace_result.interrupted
+
+    spans = exporter.get_finished_spans()
+    names = {s.name for s in spans}
+    assert "dizzygraph.otel-demo" in names
+    assert "dizzygraph.alpha" in names
+    assert "dizzygraph.beta" in names
+    alpha = next(s for s in spans if s.name == "dizzygraph.alpha")
+    assert alpha.attributes.get("otel.span_name") == "dizzygraph.alpha"
+    assert alpha.attributes.get("dizzygraph.path_step") == "alpha"
+
+
+def test_otel_module_soft_import():
+    """dizzygraph.otel imports without requiring OTel packages at module load."""
+    from dizzygraph import otel as otel_mod
+
+    assert hasattr(otel_mod, "OpenTelemetryCallback")
+    assert hasattr(otel_mod, "otel_available")
+
+
 def test_integration_starters_fail_without_keys():
     """Starters must exit non-zero when required keys are missing (no fake success)."""
     import os
@@ -332,6 +375,7 @@ def test_integration_starters_fail_without_keys():
         "GEMINI_API_KEY",
     }
     env_base = {k: v for k, v in os.environ.items() if k not in drop}
+    env_base["DIZZY_SKIP_DOTENV"] = "1"  # don't reload OpenClaw keys in fail-loud checks
     for name, extra in starters:
         env = {**env_base, **extra}
         proc = subprocess.run(

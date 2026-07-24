@@ -42,9 +42,11 @@ Live Trinity runbook: [`docs/RUNBOOK-DIZZYGRAPH.md`](../docs/RUNBOOK-DIZZYGRAPH.
 | Silent regression meta-loop | `MetaLoopExecutor` + fleet metrics / Protect trend |
 | HITL after Protect trigger | `interrupt()` → resume via UI / `POST /api/runs/{id}/resume` |
 | Tenant ↔ Galileo project/stream | `DIZZY_TENANT_GALILEO` / `X-Tenant-Id` |
-| Path ↔ span correlation | `otel.span_name=dizzygraph.<node>` on events + tenant-mapped Galileo flush (pragmatic v1) |
+| Path ↔ span correlation | `otel.span_name=dizzygraph.<node>` on events + optional OTel SDK exporter (`dizzygraph.otel`) + tenant-mapped Galileo flush |
 
-Third-party starters (fail-loud, no mock success): [`examples/integrations/`](../examples/integrations/) — CrewAI, A2A, Google ADK, OpenAI Agents, MS Agent Framework, Strands, Vercel AI SDK, Bedrock, Gemini/Vertex, OpenInference/LangGraph. Full DizzyGraph OTel SDK exporter remains optional.
+Third-party starters (fail-loud, no mock success): [`examples/integrations/`](../examples/integrations/) — CrewAI, A2A dual-agent (`galileo-a2a`), Google ADK (`galileo-adk`), OpenAI Agents, MS Agent Framework, Strands, Vercel AI SDK, Bedrock, Gemini/Vertex, OpenInference/LangGraph.
+
+**DizzyGraph OTel exporter:** `pip install 'dizzygraph[otel]'` (or `galileo[otel] opentelemetry-sdk`). Auto-attaches on fleet runs when `GALILEO_API_KEY` is set (disable with `DIZZY_OTEL=0`). Standalone: `OpenTelemetryCallback` / `setup_galileo_tracer_provider`.
 
 ---
 

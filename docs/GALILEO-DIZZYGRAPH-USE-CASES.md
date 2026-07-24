@@ -10,11 +10,13 @@ Status below matches the control-plane `/api/trinity/use-cases` list (v0.4+).
 | **Silent regression meta-loop** | `MetaLoopExecutor` | Scorer trends across meta iters | `meta_protect_score` / `meta_quality_delta` | **shipped** (API + UI) |
 | **HITL after Protect trigger** | `interrupt()` / resume | Protect `triggered` → human gate | `hitl_interrupt` + aging alert | **shipped** |
 | **Tenant ↔ project/stream** | Auth `tenant_id` | Isolated Console projects | Per-tenant fleet flush target | **shipped** (wired into Galileo flush) |
-| **Path ↔ span correlation** | `path_steps` + events | Trace span names `dizzygraph.<node>` | Stuck node = hot span | **shipped** (pragmatic v1; full DizzyGraph OTel exporter optional) |
+| **Path ↔ span correlation** | `path_steps` + events + `dizzygraph.otel` | Trace span names `dizzygraph.<node>` (SDK export when OTel enabled) | Stuck node = hot span | **shipped** (event metadata + optional OTel SDK / GalileoSpanProcessor) |
 
 **Third-party starters** (real SDK imports, fail-loud without keys/packages):
-[`examples/integrations/`](../examples/integrations/) — CrewAI, A2A (`galileo-a2a`), Google ADK (`galileo-adk`),
+[`examples/integrations/`](../examples/integrations/) — CrewAI, A2A dual-agent (`galileo-a2a`), Google ADK (`galileo-adk`),
 OpenAI Agents, MS Agent Framework, Strands, Vercel AI SDK, Bedrock, Gemini/Vertex, OpenInference/LangGraph.
+
+**Out of scope:** full Galileo cookbook catalog parity (Weather Vibes, etc.).
 
 ## API
 

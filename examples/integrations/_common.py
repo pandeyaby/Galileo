@@ -13,6 +13,11 @@ if str(ROOT) not in sys.path:
 
 
 def load_keys() -> dict[str, bool]:
+    if os.environ.get("DIZZY_SKIP_DOTENV", "").strip().lower() in {"1", "true", "yes"}:
+        return {
+            "openai": bool(os.environ.get("OPENAI_API_KEY")),
+            "galileo": bool(os.environ.get("GALILEO_API_KEY")),
+        }
     try:
         from trinity_dizzy import load_runtime_keys
 
@@ -25,13 +30,15 @@ def load_keys() -> dict[str, bool]:
 
 
 def require_openai() -> int | None:
-    if not load_keys().get("openai") and not os.environ.get("OPENAI_API_KEY"):
+    load_keys()
+    if not os.environ.get("OPENAI_API_KEY"):
         print("ERROR: OPENAI_API_KEY required (no mock).")
         return 2
     return None
 
 
 def require_galileo() -> int | None:
+    load_keys()
     if not os.environ.get("GALILEO_API_KEY"):
         print("ERROR: GALILEO_API_KEY required for this starter (no silent skip).")
         return 2

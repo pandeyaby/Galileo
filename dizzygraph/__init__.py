@@ -34,6 +34,14 @@ from .interrupt import interrupt, GraphInterrupt
 from .retry import RetryPolicy
 from .events import StreamEvent
 from .callbacks import BaseCallbackHandler, LoggingCallback, FanoutCallbacks
+from .otel import (
+    DizzyGraphTracer,
+    OpenTelemetryCallback,
+    maybe_open_telemetry_callback,
+    otel_available,
+    otel_enabled,
+    setup_galileo_tracer_provider,
+)
 from .viz import visualize_graph, to_mermaid, path_from_trace
 from .persist import (
     save_graph,
@@ -82,6 +90,12 @@ __all__ = [
     "BaseCallbackHandler",
     "LoggingCallback",
     "FanoutCallbacks",
+    "DizzyGraphTracer",
+    "OpenTelemetryCallback",
+    "maybe_open_telemetry_callback",
+    "otel_available",
+    "otel_enabled",
+    "setup_galileo_tracer_provider",
     "visualize_graph",
     "to_mermaid",
     "path_from_trace",
@@ -93,4 +107,4 @@ __all__ = [
     "load_state",
 ]
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"

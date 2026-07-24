@@ -45,6 +45,37 @@ def require_galileo() -> int | None:
     return None
 
 
+def require_env(*names: str) -> int | None:
+    """Fail loud if any of ``names`` is missing from the environment."""
+    load_keys()
+    missing = [n for n in names if not (os.environ.get(n) or "").strip()]
+    if missing:
+        joined = ", ".join(missing)
+        print(f"ERROR: missing required env var(s): {joined} (no mock / no silent skip).")
+        return 2
+    return None
+
+
+def require_any_env(*groups: tuple[str, ...]) -> int | None:
+    """Fail loud unless at least one env var from each group is set.
+
+    Example: ``require_any_env(("ELASTIC_URL", "ELASTIC_CLOUD_ID"), ("ELASTIC_API_KEY",))``
+    """
+    load_keys()
+    missing_groups: list[str] = []
+    for group in groups:
+        if not any((os.environ.get(n) or "").strip() for n in group):
+            missing_groups.append(" or ".join(group))
+    if missing_groups:
+        print(
+            "ERROR: missing required env var(s): "
+            + "; ".join(missing_groups)
+            + " (no mock / no silent skip)."
+        )
+        return 2
+    return None
+
+
 def project_stream(default_stream: str) -> tuple[str, str]:
     return (
         os.environ.get("GALILEO_PROJECT", "rax-galileo-labs"),

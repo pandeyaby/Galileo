@@ -46,7 +46,7 @@ Live Trinity runbook: [`docs/RUNBOOK-DIZZYGRAPH.md`](../docs/RUNBOOK-DIZZYGRAPH.
 
 Third-party starters (fail-loud, no mock success): [`examples/integrations/`](../examples/integrations/) — CrewAI, A2A dual-agent (`galileo-a2a`), Google ADK (`galileo-adk`), OpenAI Agents, MS Agent Framework, Strands, Vercel AI SDK, Bedrock, Gemini/Vertex, OpenInference/LangGraph.
 
-**DizzyGraph OTel exporter:** `pip install 'dizzygraph[otel]'` (or `galileo[otel] opentelemetry-sdk`). Auto-attaches on fleet runs when `GALILEO_API_KEY` is set (disable with `DIZZY_OTEL=0`). Standalone: `OpenTelemetryCallback` / `setup_galileo_tracer_provider`.
+**DizzyGraph OTel exporter:** `pip install 'dizzygraph[otel]'` (or `galileo[otel] opentelemetry-sdk`). Auto-attaches on fleet runs when `GALILEO_API_KEY` is set (disable with `DIZZY_OTEL=0`). Standalone: `OpenTelemetryCallback` / `setup_tracer_provider`. Sampling, multi-backend, batch/simple, resource attrs: [`docs/OTEL-DEPLOYMENT.md`](../docs/OTEL-DEPLOYMENT.md).
 
 ---
 

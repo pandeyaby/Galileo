@@ -14,9 +14,14 @@ Status below matches the control-plane `/api/trinity/use-cases` list (v0.4+).
 
 **Third-party starters** (real SDK imports, fail-loud without keys/packages):
 [`examples/integrations/`](../examples/integrations/) — CrewAI, A2A dual-agent (`galileo-a2a`), Google ADK (`galileo-adk`),
-OpenAI Agents, MS Agent Framework, Strands, Vercel AI SDK, Bedrock, Gemini/Vertex, OpenInference/LangGraph.
+OpenAI Agents, MS Agent Framework, Strands, Vercel AI SDK, Bedrock, Gemini/Vertex, OpenInference/LangGraph,
+plus cookbooks: Stripe TS agent, MongoDB Atlas RAG, Elasticsearch+LangGraph RAG, Instruction Adherence
+([`COOKBOOKS.md`](../examples/integrations/COOKBOOKS.md)).
 
-**Out of scope:** full Galileo cookbook catalog parity (Weather Vibes, etc.).
+**OTel deployment patterns** (sampling, multi-backend, batch/simple, resource attrs, env matrix):
+[`docs/OTEL-DEPLOYMENT.md`](OTEL-DEPLOYMENT.md).
+
+**Out of scope:** full Galileo cookbook catalog parity (Weather Vibes, etc.) beyond the recipes above.
 
 ## API
 

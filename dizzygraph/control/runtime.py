@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 import uuid
@@ -426,7 +427,11 @@ class FleetRuntime:
         self, thread_id: str, graph_id: str, tenant_id: str, initial: Any
     ) -> None:
         try:
-            from ..otel import DizzyGraphTracer, otel_enabled, setup_galileo_tracer_provider
+            from ..otel import (
+                DizzyGraphTracer,
+                otel_enabled,
+                setup_tracer_provider,
+            )
             from .tenant_projects import resolve_galileo_target
             from ..state import State as DGState
 
@@ -434,11 +439,21 @@ class FleetRuntime:
                 return
             target = resolve_galileo_target(tenant_id)
             try:
-                setup_galileo_tracer_provider(
-                    project=target["project"], log_stream=target["log_stream"]
+                # Env-driven deployment: sampling, batch/simple, console/OTLP secondary,
+                # resource attrs (see docs/OTEL-DEPLOYMENT.md). Trinity fleet wires here.
+                setup_tracer_provider(
+                    project=target["project"],
+                    log_stream=target["log_stream"],
+                    service_name=os.environ.get("DIZZY_OTEL_SERVICE_NAME")
+                    or os.environ.get("OTEL_SERVICE_NAME")
+                    or "dizzygraph-control",
+                    resource_attributes={
+                        "dizzygraph.component": "control-plane",
+                        "dizzygraph.tenant_id": tenant_id,
+                    },
                 )
             except ImportError:
-                # OTel API/SDK present but Galileo processor missing — still export locally
+                # OTel API/SDK present but exporters missing — still attach local tracer
                 pass
             state = initial if isinstance(initial, DGState) else None
             if state is None and isinstance(initial, dict):

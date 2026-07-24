@@ -319,9 +319,10 @@ def test_otel_callback_exports_node_spans(monkeypatch):
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-    from dizzygraph.otel import OpenTelemetryCallback
+    from dizzygraph.otel import OpenTelemetryCallback, reset_otel_provider_state
 
     monkeypatch.setenv("DIZZY_OTEL", "1")
+    reset_otel_provider_state()
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
@@ -365,6 +366,9 @@ def test_integration_starters_fail_without_keys():
         ("crewai_galileo.py", {}),
         ("a2a_galileo.py", {}),
         ("bedrock_galileo.py", {"GALILEO_API_KEY": "x"}),  # still needs AWS
+        ("mongodb_atlas_rag_galileo.py", {}),
+        ("elasticsearch_langgraph_rag_galileo.py", {}),
+        ("instruction_adherence_galileo.py", {}),
     ]
     drop = {
         "OPENAI_API_KEY",
@@ -373,6 +377,13 @@ def test_integration_starters_fail_without_keys():
         "AWS_PROFILE",
         "GOOGLE_API_KEY",
         "GEMINI_API_KEY",
+        "MONGODB_URI",
+        "ELASTIC_URL",
+        "ELASTIC_CLOUD_ID",
+        "ELASTIC_API_KEY",
+        "ELASTIC_USER",
+        "ELASTIC_PASSWORD",
+        "STRIPE_SECRET_KEY",
     }
     env_base = {k: v for k, v in os.environ.items() if k not in drop}
     env_base["DIZZY_SKIP_DOTENV"] = "1"  # don't reload OpenClaw keys in fail-loud checks

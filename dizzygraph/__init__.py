@@ -37,10 +37,14 @@ from .callbacks import BaseCallbackHandler, LoggingCallback, FanoutCallbacks
 from .otel import (
     DizzyGraphTracer,
     OpenTelemetryCallback,
+    OtelConfig,
+    build_sampler,
     maybe_open_telemetry_callback,
     otel_available,
     otel_enabled,
+    resolve_sampler_name,
     setup_galileo_tracer_provider,
+    setup_tracer_provider,
 )
 from .viz import visualize_graph, to_mermaid, path_from_trace
 from .persist import (
@@ -92,10 +96,14 @@ __all__ = [
     "FanoutCallbacks",
     "DizzyGraphTracer",
     "OpenTelemetryCallback",
+    "OtelConfig",
+    "build_sampler",
     "maybe_open_telemetry_callback",
     "otel_available",
     "otel_enabled",
+    "resolve_sampler_name",
     "setup_galileo_tracer_provider",
+    "setup_tracer_provider",
     "visualize_graph",
     "to_mermaid",
     "path_from_trace",

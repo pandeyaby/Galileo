@@ -37,7 +37,7 @@ python trinity_dizzy.py --mock --mermaid                  # offline topology onl
 
 [`dizzygraph/README.md`](dizzygraph/README.md) · [`dizzygraph/control/GOALS.md`](dizzygraph/control/GOALS.md) · [`docs/GALILEO-DIZZYGRAPH-USE-CASES.md`](docs/GALILEO-DIZZYGRAPH-USE-CASES.md) · [`docs/RUNBOOK-DIZZYGRAPH.md`](docs/RUNBOOK-DIZZYGRAPH.md)
 
-**Integrations (starters):** [`examples/integrations/`](examples/integrations/) — CrewAI, OpenAI Agents, OpenInference-shaped LangGraph spans. Google ADK and a full OTel exporter are still pending.
+**Integrations (starters):** [`examples/integrations/`](examples/integrations/) — CrewAI, A2A (`galileo-a2a`), Google ADK (`galileo-adk`), OpenAI Agents, MS Agent Framework, Strands, Vercel AI SDK, Bedrock, Gemini/Vertex, OpenInference/LangGraph. Real SDK imports; fail loudly without keys/packages (no mock success).
 
 ---
 

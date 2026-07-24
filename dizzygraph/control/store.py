@@ -11,9 +11,6 @@ from typing import Any
 
 
 SCHEMA = """
-PRAGMA journal_mode=WAL;
-PRAGMA synchronous=NORMAL;
-
 CREATE TABLE IF NOT EXISTS graphs (
   tenant_id TEXT NOT NULL DEFAULT 'default',
   graph_id TEXT NOT NULL,
@@ -39,8 +36,6 @@ CREATE TABLE IF NOT EXISTS runs (
   meta_json TEXT NOT NULL DEFAULT '{}',
   PRIMARY KEY (tenant_id, thread_id)
 );
-CREATE INDEX IF NOT EXISTS idx_runs_tenant_status ON runs(tenant_id, status);
-CREATE INDEX IF NOT EXISTS idx_runs_parent ON runs(parent_thread_id);
 
 CREATE TABLE IF NOT EXISTS checkpoints (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,7 +50,6 @@ CREATE TABLE IF NOT EXISTS checkpoints (
   interrupt_node TEXT,
   created_at REAL NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_cp_thread ON checkpoints(thread_id, id DESC);
 
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,9 +61,6 @@ CREATE TABLE IF NOT EXISTS events (
   payload_json TEXT NOT NULL,
   created_at REAL NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_ev_id ON events(id);
-CREATE INDEX IF NOT EXISTS idx_ev_tenant ON events(tenant_id, id);
-CREATE INDEX IF NOT EXISTS idx_ev_thread ON events(thread_id, id);
 
 CREATE TABLE IF NOT EXISTS alerts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,7 +74,6 @@ CREATE TABLE IF NOT EXISTS alerts (
   created_at REAL NOT NULL,
   acked INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS idx_alerts_open ON alerts(tenant_id, acked, id DESC);
 
 CREATE TABLE IF NOT EXISTS path_steps (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -92,7 +82,6 @@ CREATE TABLE IF NOT EXISTS path_steps (
   node_id TEXT NOT NULL,
   created_at REAL NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_path_thread ON path_steps(thread_id, id);
 
 CREATE TABLE IF NOT EXISTS metrics (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,6 +91,18 @@ CREATE TABLE IF NOT EXISTS metrics (
   labels_json TEXT NOT NULL DEFAULT '{}',
   created_at REAL NOT NULL
 );
+"""
+
+# Indexes applied after additive migration so older DBs without tenant_id can upgrade.
+INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_runs_tenant_status ON runs(tenant_id, status);
+CREATE INDEX IF NOT EXISTS idx_runs_parent ON runs(parent_thread_id);
+CREATE INDEX IF NOT EXISTS idx_cp_thread ON checkpoints(thread_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_ev_id ON events(id);
+CREATE INDEX IF NOT EXISTS idx_ev_tenant ON events(tenant_id, id);
+CREATE INDEX IF NOT EXISTS idx_ev_thread ON events(thread_id, id);
+CREATE INDEX IF NOT EXISTS idx_alerts_open ON alerts(tenant_id, acked, id DESC);
+CREATE INDEX IF NOT EXISTS idx_path_thread ON path_steps(thread_id, id);
 CREATE INDEX IF NOT EXISTS idx_metrics_name ON metrics(tenant_id, name, created_at);
 """
 
@@ -115,36 +116,51 @@ class ControlStore:
         self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         with self._lock:
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=NORMAL")
+            # Migrate first when tables already exist without tenant_id, then create/indexes.
+            self._migrate()
             self._conn.executescript(SCHEMA)
             self._migrate()
+            self._conn.executescript(INDEXES)
             self._conn.commit()
 
     def _migrate(self) -> None:
         """Additive migrations for older DBs created before tenants/path/metrics."""
-        cols = {
-            "runs": {r[1] for r in self._conn.execute("PRAGMA table_info(runs)").fetchall()},
-            "events": {r[1] for r in self._conn.execute("PRAGMA table_info(events)").fetchall()},
-            "alerts": {r[1] for r in self._conn.execute("PRAGMA table_info(alerts)").fetchall()},
-            "checkpoints": {
-                r[1] for r in self._conn.execute("PRAGMA table_info(checkpoints)").fetchall()
-            },
-            "graphs": {r[1] for r in self._conn.execute("PRAGMA table_info(graphs)").fetchall()},
+        existing = {
+            r[0]
+            for r in self._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
         }
+        cols: dict[str, set[str]] = {}
+        for table in ("runs", "events", "alerts", "checkpoints", "graphs", "path_steps", "metrics"):
+            if table not in existing:
+                continue
+            cols[table] = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})").fetchall()}
         # Old single-PK graphs/runs — leave as-is if already new schema; skip destructive migrate
         if "runs" in cols and "parent_thread_id" not in cols["runs"]:
             try:
                 self._conn.execute("ALTER TABLE runs ADD COLUMN parent_thread_id TEXT")
             except sqlite3.OperationalError:
                 pass
-        if "runs" in cols and "tenant_id" not in cols["runs"]:
-            for table in ("runs", "events", "alerts", "checkpoints", "graphs"):
-                if table in cols and "tenant_id" not in cols[table]:
-                    try:
-                        self._conn.execute(
-                            f"ALTER TABLE {table} ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'"
-                        )
-                    except sqlite3.OperationalError:
-                        pass
+        for table in ("runs", "events", "alerts", "checkpoints", "graphs", "path_steps", "metrics"):
+            if table in cols and "tenant_id" not in cols[table]:
+                try:
+                    self._conn.execute(
+                        f"ALTER TABLE {table} ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'"
+                    )
+                except sqlite3.OperationalError:
+                    pass
+        # Rebuild graphs/runs primary keys if still pre-tenant (SQLite can't ALTER PK)
+        if "graphs" in cols and "tenant_id" not in cols.get("graphs", set()):
+            # column add above should have fixed tenant_id; PK remains old but usable
+            pass
+        if "runs" in cols and "meta_json" not in cols["runs"]:
+            try:
+                self._conn.execute("ALTER TABLE runs ADD COLUMN meta_json TEXT NOT NULL DEFAULT '{}'")
+            except sqlite3.OperationalError:
+                pass
 
     def close(self) -> None:
         with self._lock:

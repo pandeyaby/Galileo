@@ -116,6 +116,7 @@
       <button id="btn-fanout">Fan-out 6</button>
       <button id="btn-trinity">Trinity ×4</button>
       <button id="btn-xl">XL-1..6 fan-out</button>
+      <button id="btn-meta">Meta regression</button>
       <button id="btn-refresh">Refresh</button>
     </div>
   </header>
@@ -395,6 +396,22 @@
         if (res.parent_thread_id) selectRun(res.parent_thread_id);
       } catch (err) {
         alert("XL fan-out failed (needs live keys):\\n" + (err && err.message ? err.message : err));
+      }
+    };
+    document.getElementById("btn-meta").onclick = async () => {
+      try {
+        const res = await api("/api/trinity/meta-regression", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            meta_iters: 3,
+            query: "How do I choose between FSDP and DeepSpeed ZeRO?",
+          }),
+        });
+        await refreshFleet();
+        if (res.thread_id) selectRun(res.thread_id);
+        else alert("Meta regression done. delta=" + (res.quality_delta ?? "n/a"));
+      } catch (err) {
+        alert("Meta regression failed (needs live keys):\\n" + (err && err.message ? err.message : err));
       }
     };
     document.getElementById("btn-refresh").onclick = () => refreshFleet();

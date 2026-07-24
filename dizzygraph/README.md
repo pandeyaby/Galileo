@@ -42,9 +42,9 @@ Live Trinity runbook: [`docs/RUNBOOK-DIZZYGRAPH.md`](../docs/RUNBOOK-DIZZYGRAPH.
 | Silent regression meta-loop | `MetaLoopExecutor` + fleet metrics / Protect trend |
 | HITL after Protect trigger | `interrupt()` → resume via UI / `POST /api/runs/{id}/resume` |
 | Tenant ↔ Galileo project/stream | `DIZZY_TENANT_GALILEO` / `X-Tenant-Id` |
-| Path ↔ span correlation | `otel.span_name=dizzygraph.<node>` on events (pragmatic v1) |
+| Path ↔ span correlation | `otel.span_name=dizzygraph.<node>` on events + tenant-mapped Galileo flush (pragmatic v1) |
 
-Still pending elsewhere: **Google ADK** starter, **full OTel exporter**. Priority-2 starters (CrewAI, OpenAI Agents, OpenInference-shaped spans) live under [`examples/integrations/`](../examples/integrations/).
+Third-party starters (fail-loud, no mock success): [`examples/integrations/`](../examples/integrations/) — CrewAI, A2A, Google ADK, OpenAI Agents, MS Agent Framework, Strands, Vercel AI SDK, Bedrock, Gemini/Vertex, OpenInference/LangGraph. Full DizzyGraph OTel SDK exporter remains optional.
 
 ---
 

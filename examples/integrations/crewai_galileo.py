@@ -1,8 +1,4 @@
-"""CrewAI → Galileo logging starter (real keys when present).
-
-Thin, runnable example — not a fake integration. Uses GalileoLogger manually
-around a CrewAI crew when ``crewai`` is installed; otherwise exits with a clear
-install hint (no silent mock of CrewAI).
+"""CrewAI → Galileo via official CrewAIEventListener (real SDK, no mock).
 
 Usage:
   pip install crewai galileo openai
@@ -14,39 +10,43 @@ from __future__ import annotations
 
 import os
 import sys
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+sys.path.insert(0, os.path.dirname(__file__))
 
-
-def _load_keys() -> dict[str, bool]:
-    try:
-        from trinity_dizzy import load_runtime_keys
-
-        return load_runtime_keys()
-    except Exception:
-        return {
-            "openai": bool(os.environ.get("OPENAI_API_KEY")),
-            "galileo": bool(os.environ.get("GALILEO_API_KEY")),
-        }
+from _common import load_keys, project_stream, require_openai
 
 
 def main() -> int:
-    keys = _load_keys()
-    if not keys.get("openai"):
-        print("ERROR: OPENAI_API_KEY required (no mock).")
-        return 2
+    err = require_openai()
+    if err:
+        return err
     try:
         from crewai import Agent, Crew, Process, Task
     except ImportError:
         print("ERROR: install crewai first: pip install crewai")
         return 2
 
-    project = os.environ.get("GALILEO_PROJECT", "rax-galileo-labs")
-    stream = os.environ.get("GALILEO_LOG_STREAM", "crewai-integration")
+    keys = load_keys()
+    project, stream = project_stream("crewai-integration")
     query = "In one short paragraph: what is gradient checkpointing?"
+
+    # Prefer official Galileo CrewAI event listener when GALILEO_API_KEY is set
+    listener = None
+    if keys.get("galileo") or os.environ.get("GALILEO_API_KEY"):
+        try:
+            from galileo import GalileoLogger
+            from galileo.handlers.crewai.handler import CrewAIEventListener
+
+            logger = GalileoLogger(project=project, log_stream=stream)
+            listener = CrewAIEventListener(
+                galileo_logger=logger,
+                start_new_trace=True,
+                flush_on_crew_completed=True,
+            )
+            print(f"galileo listener: {project}/{stream}")
+        except ImportError:
+            print("WARN: galileo.handlers.crewai unavailable — falling back to manual logger")
+            listener = None
 
     researcher = Agent(
         role="ML Infra Researcher",
@@ -62,8 +62,12 @@ def main() -> int:
     )
     crew = Crew(agents=[researcher], tasks=[task], process=Process.sequential, verbose=False)
 
-    logger = None
-    if keys.get("galileo"):
+    # Keep listener referenced so it is not GC'd before kickoff
+    _ = listener
+    result = crew.kickoff()
+    output = str(result)
+
+    if listener is None and (keys.get("galileo") or os.environ.get("GALILEO_API_KEY")):
         from galileo import GalileoLogger
 
         logger = GalileoLogger(project=project, log_stream=stream)
@@ -71,13 +75,8 @@ def main() -> int:
             input=query,
             name="crewai-galileo",
             tags=["integration", "crewai", "dizzygraph-starter"],
-            metadata={"framework": "crewai"},
+            metadata={"framework": "crewai", "path": "manual_logger_fallback"},
         )
-
-    result = crew.kickoff()
-    output = str(result)
-
-    if logger is not None:
         logger.add_llm_span(
             input=query,
             output=output,
@@ -87,8 +86,8 @@ def main() -> int:
         )
         logger.conclude(output=output)
         logger.flush()
-        print(f"galileo: {project}/{stream}")
-    else:
+        print(f"galileo manual: {project}/{stream}")
+    elif not (keys.get("galileo") or os.environ.get("GALILEO_API_KEY")):
         print("galileo: skipped (GALILEO_API_KEY missing)")
 
     print("── answer ──")
@@ -97,4 +96,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # Allow `python examples/integrations/crewai_galileo.py` from repo root
     raise SystemExit(main())

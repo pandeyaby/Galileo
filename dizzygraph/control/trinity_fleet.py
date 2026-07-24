@@ -69,64 +69,110 @@ GALILEO_USE_CASES = [
         "id": "otel-path-correlate",
         "title": "Path overlay ↔ OTel/Galileo spans",
         "layer": "path_steps + events",
-        "why": "Fleet path_steps align to span names so stuck nodes point at the hot span",
+        "why": "Fleet path_steps align to span names dizzygraph.<node>; flush uses tenant project map",
         "status": "shipped",
     },
 ]
 
 
-class GalileoFleetCallback(BaseCallbackHandler):
-    """Flush per-run summary into Galileo using tenant → project/stream mapping."""
+def flush_fleet_run_to_galileo(
+    *,
+    graph_id: str,
+    state: State | dict[str, Any],
+    tenant_id: str = "default",
+    duration_s: float = 0.0,
+    path_steps: list[str] | None = None,
+    project: str | None = None,
+    log_stream: str | None = None,
+) -> dict[str, Any] | None:
+    """
+    Flush a completed fleet run into Galileo using tenant → project/stream mapping.
 
-    def __init__(self, *, tenant_id: str = "default", project: str | None = None, log_stream: str | None = None):
+    Uses ``path_steps`` (from ControlStore) for ``dizzygraph.<node>`` span names so
+    path overlay ↔ Console spans correlate. Returns flush metadata or None if skipped.
+    """
+    if not os.environ.get("GALILEO_API_KEY"):
+        return None
+    if isinstance(state, dict):
+        data = state.get("data") or {}
+        metrics = state.get("metrics") or {}
+    else:
+        data = state.data
+        metrics = state.metrics
+    target = resolve_galileo_target(tenant_id)
+    project = project or target["project"]
+    log_stream = log_stream or target["log_stream"]
+    path = list(path_steps or data.get("path_steps") or [])
+    try:
+        from galileo import GalileoLogger
+
+        query = data.get("query") or ""
+        answer = data.get("final_answer") or data.get("draft_answer") or ""
+        logger = GalileoLogger(project=project, log_stream=log_stream)
+        logger.start_trace(
+            input=query,
+            name=f"fleet-{graph_id}",
+            tags=["fleet", "dizzygraph", graph_id, "live", f"tenant:{tenant_id}"],
+            metadata={
+                "engine": "dizzygraph-fleet",
+                "tenant_id": tenant_id,
+                "duration_s": str(round(duration_s, 4)),
+                "protect_status": str(data.get("protect_status")),
+                "protect_score": str(data.get("protect_score")),
+                "protect_path": str(data.get("protect_path")),
+                "loop_converged": str(metrics.get("loop_converged")),
+                "path_steps": ",".join(path) if path else "",
+            },
+        )
+        for step in path or ["trinity-fleet"]:
+            span_name = f"dizzygraph.{step}"
+            logger.add_llm_span(
+                input=query,
+                output=answer if step in {"protect", "responder"} else step,
+                model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+                name=span_name,
+                metadata={
+                    "otel.span_name": span_name,
+                    "openinference.span.kind": "CHAIN" if step not in {"responder", "protect"} else "LLM",
+                    "path_step": step,
+                    "protect_status": str(data.get("protect_status")),
+                },
+            )
+        logger.conclude(output=answer)
+        logger.flush()
+        return {"project": project, "log_stream": log_stream, "spans": len(path) or 1}
+    except Exception as exc:
+        log.warning("Galileo fleet flush skipped: %s", type(exc).__name__)
+        return None
+
+
+class GalileoFleetCallback(BaseCallbackHandler):
+    """Callback wrapper around ``flush_fleet_run_to_galileo`` (tenant mapping)."""
+
+    def __init__(
+        self,
+        *,
+        tenant_id: str = "default",
+        project: str | None = None,
+        log_stream: str | None = None,
+        path_steps: list[str] | None = None,
+    ):
         target = resolve_galileo_target(tenant_id)
         self.tenant_id = tenant_id
         self.project = project or target["project"]
         self.log_stream = log_stream or target["log_stream"]
+        self.path_steps = path_steps
 
     def on_graph_end(self, graph_id: str, state: State, duration_s: float) -> None:
-        if not os.environ.get("GALILEO_API_KEY"):
-            return
-        try:
-            from galileo import GalileoLogger
-
-            query = state.data.get("query") or ""
-            answer = state.data.get("final_answer") or state.data.get("draft_answer") or ""
-            path = list(state.data.get("path_steps") or [])
-            logger = GalileoLogger(project=self.project, log_stream=self.log_stream)
-            logger.start_trace(
-                input=query,
-                name=f"fleet-{graph_id}",
-                tags=["fleet", "dizzygraph", graph_id, "live", f"tenant:{self.tenant_id}"],
-                metadata={
-                    "engine": "dizzygraph-fleet",
-                    "tenant_id": self.tenant_id,
-                    "duration_s": str(round(duration_s, 4)),
-                    "protect_status": str(state.data.get("protect_status")),
-                    "protect_score": str(state.data.get("protect_score")),
-                    "protect_path": str(state.data.get("protect_path")),
-                    "loop_converged": str(state.metrics.get("loop_converged")),
-                    "path_steps": ",".join(path) if path else "",
-                },
-            )
-            # Correlate path steps to span-like names
-            for step in path or ["trinity-fleet"]:
-                span_name = f"dizzygraph.{step}"
-                logger.add_llm_span(
-                    input=query,
-                    output=answer if step in {"protect", "responder"} else step,
-                    model="gpt-4o-mini",
-                    name=span_name,
-                    metadata={
-                        "otel.span_name": span_name,
-                        "path_step": step,
-                        "protect_status": str(state.data.get("protect_status")),
-                    },
-                )
-            logger.conclude(output=answer)
-            logger.flush()
-        except Exception as exc:
-            log.warning("Galileo fleet flush skipped: %s", type(exc).__name__)
+        flush_fleet_run_to_galileo(
+            graph_id=graph_id,
+            state=state,
+            tenant_id=self.tenant_id,
+            duration_s=duration_s,
+            path_steps=self.path_steps,
+            project=self.project,
+            log_stream=self.log_stream,
+        )
 
 
 def require_live_keys() -> dict[str, bool]:

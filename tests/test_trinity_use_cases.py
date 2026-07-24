@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import pytest
 
@@ -134,6 +135,7 @@ def test_path_span_correlation_in_events(runtime):
     assert span is not None
     assert span["otel.span_name"].startswith("dizzygraph.")
     assert span["path_step"] == starts[0]["node_id"]
+    assert span.get("openinference.span.kind") == "CHAIN"
 
 
 def test_xl_fanout_requires_keys(runtime, monkeypatch):
@@ -147,7 +149,6 @@ def test_xl_fanout_requires_keys(runtime, monkeypatch):
         raise trinity_fleet.TrinityKeysError("no keys", missing=["OPENAI_API_KEY"])
 
     monkeypatch.setattr(trinity_fleet, "require_live_keys", _boom)
-    # xl_fanout imports require_live_keys at call time from trinity_fleet
     import dizzygraph.control.xl_fanout as xl_mod
 
     monkeypatch.setattr(xl_mod, "require_live_keys", _boom)
@@ -159,6 +160,25 @@ def test_xl_fanout_requires_keys(runtime, monkeypatch):
     detail = r.json()["detail"]
     assert detail.get("live_required") is True
     assert "OPENAI_API_KEY" in (detail.get("missing") or [])
+
+
+def test_meta_regression_requires_keys(runtime, monkeypatch):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from dizzygraph.control import trinity_fleet
+    from dizzygraph.control.api import create_app
+
+    def _boom():
+        raise trinity_fleet.TrinityKeysError("no keys", missing=["OPENAI_API_KEY"])
+
+    monkeypatch.setattr(trinity_fleet, "require_live_keys", _boom)
+    app = create_app(runtime)
+    client = TestClient(app)
+    r = client.post("/api/trinity/meta-regression", json={"meta_iters": 2})
+    assert r.status_code == 400
+    detail = r.json()["detail"]
+    assert detail.get("live_required") is True
 
 
 def test_supervisor_aggregates_protect_status(runtime):
@@ -228,3 +248,100 @@ def test_evaluate_protect_score_helper(monkeypatch):
     out = evaluate_protect_score(s, trinity_mod=FakeTrinity)
     assert out["protect_status"] == "triggered"
     assert out["score"] < 0.5
+
+
+def test_trinity_graph_wires_protect_checker_metadata():
+    """build_trinity_dizzy_graph marks LoopNode checker as galileo_protect (not heuristic)."""
+    from trinity_dizzy import build_trinity_dizzy_graph
+
+    g = build_trinity_dizzy_graph(protect_enabled=True, hitl_on_protect=False, max_loop_iters=1)
+    responder = g.nodes["responder"]
+    assert responder.metadata.get("checker") == "galileo_protect"
+    assert callable(responder.checker)
+
+
+def test_flush_fleet_uses_tenant_mapping(monkeypatch):
+    """Galileo flush resolves tenant → project/stream and emits dizzygraph.<node> spans."""
+    monkeypatch.setenv("GALILEO_API_KEY", "test-key")
+    monkeypatch.setenv(
+        "DIZZY_TENANT_GALILEO",
+        '{"acme":{"project":"acme-proj","log_stream":"acme-stream"}}',
+    )
+
+    spans: list[str] = []
+    flushed: dict = {}
+
+    class FakeLogger:
+        def __init__(self, project, log_stream):
+            flushed["project"] = project
+            flushed["log_stream"] = log_stream
+
+        def start_trace(self, **kwargs):
+            flushed["trace"] = kwargs
+
+        def add_llm_span(self, **kwargs):
+            spans.append(kwargs.get("name") or "")
+
+        def conclude(self, **kwargs):
+            flushed["conclude"] = kwargs
+
+        def flush(self):
+            flushed["flushed"] = True
+
+    import sys
+    import types
+
+    fake_galileo = types.ModuleType("galileo")
+    fake_galileo.GalileoLogger = FakeLogger
+    monkeypatch.setitem(sys.modules, "galileo", fake_galileo)
+
+    from dizzygraph.control.trinity_fleet import flush_fleet_run_to_galileo
+
+    meta = flush_fleet_run_to_galileo(
+        graph_id="trinity",
+        state=State(data={"query": "q", "final_answer": "a", "protect_status": "not_triggered"}),
+        tenant_id="acme",
+        duration_s=1.2,
+        path_steps=["intake", "responder", "protect"],
+    )
+    assert meta is not None
+    assert flushed["project"] == "acme-proj"
+    assert flushed["log_stream"] == "acme-stream"
+    assert flushed.get("flushed") is True
+    assert spans == ["dizzygraph.intake", "dizzygraph.responder", "dizzygraph.protect"]
+
+
+def test_integration_starters_fail_without_keys():
+    """Starters must exit non-zero when required keys are missing (no fake success)."""
+    import os
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    starters = [
+        ("crewai_galileo.py", {}),
+        ("a2a_galileo.py", {}),
+        ("bedrock_galileo.py", {"GALILEO_API_KEY": "x"}),  # still needs AWS
+    ]
+    drop = {
+        "OPENAI_API_KEY",
+        "GALILEO_API_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_PROFILE",
+        "GOOGLE_API_KEY",
+        "GEMINI_API_KEY",
+    }
+    env_base = {k: v for k, v in os.environ.items() if k not in drop}
+    for name, extra in starters:
+        env = {**env_base, **extra}
+        proc = subprocess.run(
+            [sys.executable, str(root / "examples" / "integrations" / name)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert proc.returncode == 2, (
+            f"{name} should exit 2, got {proc.returncode}: {proc.stdout}\n{proc.stderr}"
+        )
+        assert "ERROR" in (proc.stdout + proc.stderr)

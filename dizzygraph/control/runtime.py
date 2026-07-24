@@ -241,6 +241,14 @@ class FleetRuntime:
                     type="run_succeeded",
                     tenant_id=tenant_id,
                 )
+                if trace.final_state is not None:
+                    self._flush_galileo(
+                        thread_id=thread_id,
+                        graph_id=graph_id,
+                        tenant_id=tenant_id,
+                        state=trace.final_state,
+                        duration_s=float(getattr(trace, "total_duration_s", 0.0) or 0.0),
+                    )
             self.bus.publish(
                 thread_id=thread_id,
                 graph_id=graph_id,
@@ -293,6 +301,7 @@ class FleetRuntime:
             payload["span"] = {
                 "name": f"dizzygraph.{event.node_id}",
                 "otel.span_name": f"dizzygraph.{event.node_id}",
+                "openinference.span.kind": "CHAIN",
                 "kind": "INTERNAL",
                 "scope": "dizzygraph",
                 "path_step": event.node_id,
@@ -301,6 +310,7 @@ class FleetRuntime:
             payload["span"] = {
                 "name": f"dizzygraph.{event.node_id}",
                 "otel.span_name": f"dizzygraph.{event.node_id}",
+                "openinference.span.kind": "CHAIN",
                 "kind": "INTERNAL",
                 "scope": "dizzygraph",
                 "path_step": event.node_id,
@@ -323,16 +333,31 @@ class FleetRuntime:
             }
         elif event.type == "graph_end":
             payload = {k: v for k, v in payload.items() if k != "trace"}
+            interrupted = False
+            duration_s = 0.0
             if "trace" in (event.data or {}):
                 tr = event.data["trace"]
                 payload["summary"] = tr.summary() if hasattr(tr, "summary") else {}
+                duration_s = float(getattr(tr, "total_duration_s", 0.0) or 0.0)
                 if getattr(tr, "interrupted", False):
+                    interrupted = True
                     self.store.upsert_run(
                         tenant_id=tenant_id,
                         thread_id=thread_id,
                         status="interrupted",
                         current_node=tr.interrupt_node,
                     )
+            # Tenant ↔ Galileo project/stream flush (path ↔ dizzygraph.<node> spans)
+            if not interrupted and event.state is not None:
+                flush_meta = self._flush_galileo(
+                    thread_id=thread_id,
+                    graph_id=graph_id,
+                    tenant_id=tenant_id,
+                    state=event.state,
+                    duration_s=duration_s,
+                )
+                if flush_meta:
+                    payload["galileo_flush"] = flush_meta
 
         # Attach tenant onto checkpoint rows via monkey meta on checkpointer put —
         # ensure latest cp gets tenant when saved by executor (executor doesn't know tenant).
@@ -351,3 +376,35 @@ class FleetRuntime:
             payload=payload,
             tenant_id=tenant_id,
         )
+
+    def _flush_galileo(
+        self,
+        *,
+        thread_id: str,
+        graph_id: str,
+        tenant_id: str,
+        state: dict[str, Any] | Any,
+        duration_s: float,
+    ) -> dict[str, Any] | None:
+        """Flush completed run to Galileo using tenant project mapping + path spans."""
+        try:
+            from .trinity_fleet import flush_fleet_run_to_galileo
+            from ..state import State as DGState
+
+            path = self.store.get_path(thread_id) or []
+            if isinstance(state, dict):
+                st = state
+            elif isinstance(state, DGState):
+                st = state
+            else:
+                st = {"data": {}, "metrics": {}}
+            return flush_fleet_run_to_galileo(
+                graph_id=graph_id,
+                state=st,
+                tenant_id=tenant_id,
+                duration_s=duration_s,
+                path_steps=list(path),
+            )
+        except Exception as exc:
+            log.debug("galileo flush hook skipped: %s", type(exc).__name__)
+            return None

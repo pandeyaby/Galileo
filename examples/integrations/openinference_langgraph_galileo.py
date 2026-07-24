@@ -1,12 +1,14 @@
-"""OpenInference / OTel-shaped spans on a tiny LangGraph → Galileo.
+"""LangGraph + OpenInference / Galileo callback (real SDKs, no mock).
 
-Pragmatic starter: emit OpenInference-style span names via GalileoLogger
-metadata (``otel.span_name`` / ``openinference.span.kind``). Full OTel exporter
-wiring is optional; DizzyGraph fleet already correlates ``path_steps`` to
-``dizzygraph.<node>`` span names.
+Prefers:
+  1. Galileo LangChain callback (official)
+  2. OpenInference LangChain instrumentor + Galileo OTel processor
+  3. Manual GalileoLogger with openinference.span.kind metadata
 
 Usage:
-  pip install langgraph langchain-openai galileo openai
+  pip install langgraph langchain-openai langchain-core galileo openai
+  # optional OpenInference path:
+  pip install openinference-instrumentation-langchain 'galileo[otel]'
   export OPENAI_API_KEY=... GALILEO_API_KEY=...
   python examples/integrations/openinference_langgraph_galileo.py
 """
@@ -15,42 +17,30 @@ from __future__ import annotations
 
 import os
 import sys
-from pathlib import Path
 from typing import TypedDict
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+sys.path.insert(0, os.path.dirname(__file__))
 
-
-def _load_keys() -> dict[str, bool]:
-    try:
-        from trinity_dizzy import load_runtime_keys
-
-        return load_runtime_keys()
-    except Exception:
-        return {
-            "openai": bool(os.environ.get("OPENAI_API_KEY")),
-            "galileo": bool(os.environ.get("GALILEO_API_KEY")),
-        }
+from _common import load_keys, project_stream, require_openai
 
 
 def main() -> int:
-    keys = _load_keys()
-    if not keys.get("openai"):
-        print("ERROR: OPENAI_API_KEY required (no mock).")
-        return 2
+    err = require_openai()
+    if err:
+        return err
     try:
-        from langgraph.graph import END, StateGraph
-        from langchain_openai import ChatOpenAI
         from langchain_core.messages import HumanMessage
+        from langchain_openai import ChatOpenAI
+        from langgraph.graph import END, StateGraph
     except ImportError:
         print("ERROR: pip install langgraph langchain-openai langchain-core")
         return 2
 
-    project = os.environ.get("GALILEO_PROJECT", "rax-galileo-labs")
-    stream = os.environ.get("GALILEO_LOG_STREAM", "openinference-langgraph")
+    keys = load_keys()
+    project, stream = project_stream("openinference-langgraph")
     query = "One sentence: what is ZeRO optimizer sharding?"
+    os.environ.setdefault("GALILEO_PROJECT", project)
+    os.environ.setdefault("GALILEO_LOG_STREAM", stream)
 
     class S(TypedDict):
         query: str
@@ -68,8 +58,38 @@ def main() -> int:
     g.add_edge("respond", END)
     app = g.compile()
 
-    logger = None
-    if keys.get("galileo"):
+    mode = "manual"
+    config: dict = {}
+
+    if keys.get("galileo") or os.environ.get("GALILEO_API_KEY"):
+        # 1) Official Galileo LangChain callback
+        try:
+            from galileo import GalileoLogger
+            from galileo.handlers.langchain import GalileoCallback
+
+            logger = GalileoLogger(project=project, log_stream=stream)
+            cb = GalileoCallback(galileo_logger=logger, start_new_trace=True, flush_on_chain_end=True)
+            config = {"callbacks": [cb]}
+            mode = "galileo_langchain_callback"
+            print(f"galileo: {mode} → {project}/{stream}")
+        except ImportError:
+            # 2) OpenInference + Galileo OTel
+            try:
+                from _common import setup_galileo_otel
+                from openinference.instrumentation.langchain import LangChainInstrumentor
+
+                provider = setup_galileo_otel(project=project, log_stream=stream)
+                LangChainInstrumentor().instrument(tracer_provider=provider)
+                mode = "openinference_otel"
+                print(f"galileo: {mode} → {project}/{stream}")
+            except ImportError:
+                mode = "manual"
+                print("galileo: falling back to manual GalileoLogger spans")
+
+    result = app.invoke({"query": query, "answer": ""}, config=config or None)
+    answer = result.get("answer") or ""
+
+    if mode == "manual" and (keys.get("galileo") or os.environ.get("GALILEO_API_KEY")):
         from galileo import GalileoLogger
 
         logger = GalileoLogger(project=project, log_stream=stream)
@@ -79,12 +99,6 @@ def main() -> int:
             tags=["integration", "openinference", "langgraph"],
             metadata={"framework": "langgraph", "otel.scope": "openinference-starter"},
         )
-
-    result = app.invoke({"query": query, "answer": ""})
-    answer = result.get("answer") or ""
-
-    if logger is not None:
-        # OpenInference-shaped span metadata (pragmatic v1 — no full OTel SDK)
         logger.add_llm_span(
             input=query,
             output=answer,
@@ -98,8 +112,8 @@ def main() -> int:
         )
         logger.conclude(output=answer)
         logger.flush()
-        print(f"galileo: {project}/{stream}")
-    else:
+        print(f"galileo manual: {project}/{stream}")
+    elif not (keys.get("galileo") or os.environ.get("GALILEO_API_KEY")):
         print("galileo: skipped (GALILEO_API_KEY missing)")
 
     print("── answer ──")

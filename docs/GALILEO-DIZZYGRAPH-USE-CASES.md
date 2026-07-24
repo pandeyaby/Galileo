@@ -5,14 +5,16 @@ Status below matches the control-plane `/api/trinity/use-cases` list (v0.4+).
 
 | Use case | DizzyGraph layer | Galileo surface | Fleet signal | Status |
 |----------|------------------|-----------------|--------------|--------|
-| **Protect as LoopNode checker** | `LoopNode` maker/checker | Protect invoke / stage | `loop_non_converge` alert (+ Protect score/path) | **shipped** |
+| **Protect as LoopNode checker** | `LoopNode` maker/checker | Live `app.protect_node` → `invoke_protect` / LLM-judge | `loop_non_converge` alert (+ Protect score/path) | **shipped** |
 | **XL drill fan-out** | `Supervisor` / XL graphs | One project, many traces | Parent aggregates child Protect status | **shipped** |
-| **Silent regression meta-loop** | `MetaLoopExecutor` | Scorer trends across meta iters | `meta_protect_score` / `meta_quality_delta` | **shipped** |
+| **Silent regression meta-loop** | `MetaLoopExecutor` | Scorer trends across meta iters | `meta_protect_score` / `meta_quality_delta` | **shipped** (API + UI) |
 | **HITL after Protect trigger** | `interrupt()` / resume | Protect `triggered` → human gate | `hitl_interrupt` + aging alert | **shipped** |
-| **Tenant ↔ project/stream** | Auth `tenant_id` | Isolated Console projects | Per-tenant fleet + flush target | **shipped** |
-| **Path ↔ span correlation** | `path_steps` + events | Trace span names `dizzygraph.<node>` | Stuck node = hot span | **shipped** (pragmatic v1; full OTel exporter pending) |
+| **Tenant ↔ project/stream** | Auth `tenant_id` | Isolated Console projects | Per-tenant fleet flush target | **shipped** (wired into Galileo flush) |
+| **Path ↔ span correlation** | `path_steps` + events | Trace span names `dizzygraph.<node>` | Stuck node = hot span | **shipped** (pragmatic v1; full DizzyGraph OTel exporter optional) |
 
-**Not in this table (still pending):** Google ADK starter; full OpenTelemetry exporter. Priority-2 starters (CrewAI, OpenAI Agents, OpenInference-shaped LangGraph) are under [`examples/integrations/`](../examples/integrations/).
+**Third-party starters** (real SDK imports, fail-loud without keys/packages):
+[`examples/integrations/`](../examples/integrations/) — CrewAI, A2A (`galileo-a2a`), Google ADK (`galileo-adk`),
+OpenAI Agents, MS Agent Framework, Strands, Vercel AI SDK, Bedrock, Gemini/Vertex, OpenInference/LangGraph.
 
 ## API
 

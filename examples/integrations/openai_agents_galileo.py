@@ -1,7 +1,4 @@
-"""OpenAI Agents SDK → Galileo logging starter (real keys when present).
-
-Uses the official ``openai-agents`` package when installed. Logs the agent run
-to Galileo via GalileoLogger. No silent mock of the Agents SDK.
+"""OpenAI Agents SDK → Galileo via GalileoTracingProcessor (real SDK, no mock).
 
 Usage:
   pip install openai-agents galileo openai
@@ -14,73 +11,47 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+sys.path.insert(0, os.path.dirname(__file__))
 
-
-def _load_keys() -> dict[str, bool]:
-    try:
-        from trinity_dizzy import load_runtime_keys
-
-        return load_runtime_keys()
-    except Exception:
-        return {
-            "openai": bool(os.environ.get("OPENAI_API_KEY")),
-            "galileo": bool(os.environ.get("GALILEO_API_KEY")),
-        }
+from _common import load_keys, project_stream, require_openai
 
 
 async def _run() -> int:
-    keys = _load_keys()
-    if not keys.get("openai"):
-        print("ERROR: OPENAI_API_KEY required (no mock).")
-        return 2
+    err = require_openai()
+    if err:
+        return err
     try:
         from agents import Agent, Runner
+        from agents.tracing import set_trace_processors
     except ImportError:
         print("ERROR: install openai-agents first: pip install openai-agents")
         return 2
 
-    project = os.environ.get("GALILEO_PROJECT", "rax-galileo-labs")
-    stream = os.environ.get("GALILEO_LOG_STREAM", "openai-agents-integration")
+    keys = load_keys()
+    project, stream = project_stream("openai-agents-integration")
     query = "In one short paragraph: what is vLLM PagedAttention?"
+
+    if keys.get("galileo") or os.environ.get("GALILEO_API_KEY"):
+        try:
+            from galileo import GalileoLogger
+            from galileo.handlers.openai_agents import GalileoTracingProcessor
+
+            logger = GalileoLogger(project=project, log_stream=stream)
+            set_trace_processors([GalileoTracingProcessor(galileo_logger=logger)])
+            print(f"galileo processor: {project}/{stream}")
+        except ImportError:
+            print("ERROR: galileo.handlers.openai_agents unavailable — upgrade galileo")
+            return 2
+    else:
+        print("galileo: skipped (GALILEO_API_KEY missing)")
 
     agent = Agent(
         name="MLInfraAgent",
         instructions="You are an ML platform engineer. Answer briefly and concretely.",
     )
-
-    logger = None
-    if keys.get("galileo"):
-        from galileo import GalileoLogger
-
-        logger = GalileoLogger(project=project, log_stream=stream)
-        logger.start_trace(
-            input=query,
-            name="openai-agents-galileo",
-            tags=["integration", "openai-agents", "dizzygraph-starter"],
-            metadata={"framework": "openai-agents"},
-        )
-
     result = await Runner.run(agent, query)
     output = str(getattr(result, "final_output", None) or result)
-
-    if logger is not None:
-        logger.add_llm_span(
-            input=query,
-            output=output,
-            model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-            name="openai_agents.runner.run",
-            metadata={"otel.span_name": "openai_agents.runner.run"},
-        )
-        logger.conclude(output=output)
-        logger.flush()
-        print(f"galileo: {project}/{stream}")
-    else:
-        print("galileo: skipped (GALILEO_API_KEY missing)")
 
     print("── answer ──")
     print(output[:800])

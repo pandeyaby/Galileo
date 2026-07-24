@@ -1,1 +1,1 @@
-# === examples/integrations/__init__.py ===
+"""Galileo third-party integration starters (fail-loud, no mock success)."""

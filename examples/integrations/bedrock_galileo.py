@@ -22,12 +22,25 @@ def main() -> int:
     err = require_galileo()
     if err:
         return err
-    if not (os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("AWS_PROFILE")):
-        print(
-            "ERROR: AWS credentials required "
-            "(AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or AWS_PROFILE). No mock."
-        )
-        return 2
+    # Accept explicit env OR the default boto3 credential chain (~/.aws, IAM role, etc.)
+    has_explicit = bool(os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("AWS_PROFILE"))
+    if not has_explicit:
+        try:
+            import boto3
+
+            sess = boto3.Session()
+            if sess.get_credentials() is None:
+                print(
+                    "ERROR: AWS credentials required "
+                    "(AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, AWS_PROFILE, or default chain). No mock."
+                )
+                return 2
+        except ImportError:
+            print("ERROR: install boto3: pip install boto3")
+            return 2
+        except Exception as exc:
+            print(f"ERROR: AWS credential resolution failed: {type(exc).__name__}: {exc}")
+            return 2
 
     try:
         import boto3

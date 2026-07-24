@@ -15,7 +15,7 @@ import { generateText } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import { resourceFromAttributes } from "@opentelemetry/resources";
+import { Resource } from "@opentelemetry/resources";
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -38,7 +38,7 @@ async function main() {
     process.env.GALILEO_OTLP_ENDPOINT || "https://api.galileo.ai/otel/traces";
 
   const sdk = new NodeSDK({
-    resource: resourceFromAttributes({
+    resource: new Resource({
       "service.name": "dizzygraph-vercel-ai-sdk",
       "galileo.project": project,
       "galileo.log_stream": logStream,

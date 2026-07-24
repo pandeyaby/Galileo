@@ -44,7 +44,7 @@ async def _run() -> int:
     enable_instrumentation(enable_sensitive_data=True)
     print(f"galileo otel + agent-framework → {project}/{stream}")
 
-    client = af_openai.OpenAIChatClient(model_id=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"))
+    client = af_openai.OpenAIChatClient(model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"))
     agent = client.as_agent(
         name="MLInfraAgent",
         instructions="You are an ML platform engineer. Answer in one short paragraph.",

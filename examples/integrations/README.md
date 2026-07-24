@@ -8,7 +8,7 @@ Cookbook recipes (Stripe / MongoDB Atlas / Elasticsearch / Instruction Adherence
 
 | Starter | Framework | Install | Run |
 |---------|-----------|---------|-----|
-| `crewai_galileo.py` | CrewAI + `CrewAIEventListener` | `pip install crewai galileo openai` | `python examples/integrations/crewai_galileo.py` |
+| `crewai_galileo.py` | CrewAI + `CrewAIEventListener` | `pip install crewai galileo openai` (Python **&lt;3.14**; use `.venv313` on this repo) | `python examples/integrations/crewai_galileo.py` |
 | `openai_agents_galileo.py` | OpenAI Agents + `GalileoTracingProcessor` | `pip install openai-agents galileo openai` | `python examples/integrations/openai_agents_galileo.py` |
 | `openinference_langgraph_galileo.py` | LangGraph + Galileo callback / OpenInference | `pip install langgraph langchain-openai galileo openai` (+ optional `openinference-instrumentation-langchain 'galileo[otel]'`) | `python examples/integrations/openinference_langgraph_galileo.py` |
 | `mongodb_atlas_rag_galileo.py` | MongoDB Atlas Vector Search RAG | `pip install pymongo openai galileo` | `python examples/integrations/mongodb_atlas_rag_galileo.py` |

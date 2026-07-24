@@ -10,6 +10,7 @@ build/
 
 # Virtual environments
 .venv/
+.venv313/
 .venv-run/
 venv/
 env/
@@ -46,3 +47,4 @@ article/results/google-*.png
 # OS
 .DS_Store
 .env
+node_modules/

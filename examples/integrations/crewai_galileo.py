@@ -20,10 +20,20 @@ def main() -> int:
     err = require_openai()
     if err:
         return err
+    if sys.version_info >= (3, 14):
+        print(
+            "ERROR: crewai (via chromadb/pydantic.v1) does not run on Python 3.14+. "
+            "Use Python 3.13, e.g. `.venv313/bin/python examples/integrations/crewai_galileo.py` "
+            "after `python3.13 -m venv .venv313 && .venv313/bin/pip install crewai galileo openai`."
+        )
+        return 2
     try:
         from crewai import Agent, Crew, Process, Task
     except ImportError:
         print("ERROR: install crewai first: pip install crewai")
+        return 2
+    except Exception as exc:
+        print(f"ERROR: crewai import failed: {type(exc).__name__}: {exc}")
         return 2
 
     keys = load_keys()

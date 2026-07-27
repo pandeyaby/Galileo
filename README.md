@@ -8,6 +8,8 @@ Under the hood it’s a small graph of steps (LangGraph or DizzyGraph), process 
 
 If you’re debugging Galileo itself: [troubleshooter](https://pandeyaby.github.io/Galileo/troubleshooter/). If you’re wiring graphs-of-loops: [DizzyGraph runbook](docs/RUNBOOK-DIZZYGRAPH.md).
 
+**Watch the demo:** [spruce-atlas-f3n5.here.now](https://spruce-atlas-f3n5.here.now/) — short walkthrough of the drills and the Galileo console.
+
 ---
 
 ## Galileo Troubleshooter

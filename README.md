@@ -224,16 +224,31 @@ git clone https://github.com/pandeyaby/Galileo.git
 cd Galileo
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env   # fill in locally — never commit real secrets
 ```
 
-### 2. Configure credentials
+### 2. Configure credentials + preflight
+
+Required vars are listed in [`.env.example`](.env.example) (names/placeholders only):
 
 ```bash
+# Prefer editing .env (gitignored). Or export:
 export OPENAI_API_KEY="sk-..."       # embeddings (text-embedding-3-small) + LLM (gpt-4o-mini)
 export GALILEO_API_KEY="..."          # app.galileo.ai → Settings → API Keys
+# Optional: GALILEO_API_KEY from ~/.openclaw/openclaw.json mcp.servers.galileo headers
 ```
 
-**Create a Galileo project** called `rax-galileo-labs` with a log stream named `trinity-stack` before running — or edit the `PROJECT` and `LOG_STREAM` constants at the top of `app.py`.
+**Create a Galileo project** called `rax-galileo-labs` with a log stream named `trinity-stack` before running — or edit the `PROJECT` and `LOG_STREAM` constants at the top of `app.py`. For Protect drills, also create stage `trinity-protect` in the Console (see [Galileo Setup](#galileo-setup)).
+
+Run the **offline** preflight before any live baseline or drill (checks key presence as booleans, corpus restore path, and prints the Protect Console checklist — **no OpenAI/Galileo API spend**):
+
+```bash
+python app.py --preflight
+# Optional opt-in flag (still no network unless GALILEO_PREFLIGHT_LIVE=1 is greenlit):
+# python app.py --preflight-live
+```
+
+Missing keys fail loud. Preflight never echoes secret values, never fakes Protect success, and never invents traces.
 
 ### 3. Run the baseline
 
@@ -436,10 +451,14 @@ See `requirements.txt`.
 
 ## Environment Variables
 
+See [`.env.example`](.env.example) for the full list (placeholders only). Required for Trinity / drills:
+
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `OPENAI_API_KEY` | ✅ | OpenAI API key (embeddings + LLM) |
-| `GALILEO_API_KEY` | ✅ | Galileo API key — `app.galileo.ai` → Settings → API Keys |
+| `GALILEO_API_KEY` | ✅ | Galileo API key — `app.galileo.ai` → Settings → API Keys (or OpenClaw mcp galileo headers) |
+
+Optional keys for integration starters (`GOOGLE_*` / `GEMINI_*` / `AWS_*` / Bedrock, etc.) are documented in `.env.example` and [`examples/integrations/SMOKE-RESULTS.md`](examples/integrations/SMOKE-RESULTS.md).
 
 ---
 
@@ -448,7 +467,8 @@ See `requirements.txt`.
 1. Create an account at [app.galileo.ai](https://app.galileo.ai)
 2. Create a project named `rax-galileo-labs` (or edit `PROJECT` in `app.py`)
 3. Create a log stream named `trinity-stack` (or edit `LOG_STREAM`)
-4. For XL-4 (Protect drill): create a Protect Stage in the Console before running — the app will attempt to create the Ruleset via API, but stage creation requires the Console
+4. For XL-4 (Protect drill): create a Protect Stage named **`trinity-protect`** in the Console before running — the app will attempt to create the Ruleset via API, but **stage creation requires the Console**. `invoke_protect` uses `stage_name=trinity-protect`.
+5. Copy `.env.example` → `.env`, then run `python app.py --preflight` (offline) before Quick Start / drills. Live drills stay on hold until keys are greenlit — no mock Protect success, no fake traces.
 
 ---
 

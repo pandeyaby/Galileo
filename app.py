@@ -33,6 +33,9 @@ Usage:
   python app.py --batch            # real engineering baseline (10 queries)
   python app.py --poison-corpus    # XL-2: swap to an off-domain index (drill)
   python app.py --restore-corpus   # restore the real corpus after XL-2
+  python app.py --preflight        # offline env / corpus / Protect checklist (no API spend)
+  python app.py --preflight-live   # same offline checks; live Galileo stage probe is opt-in
+                                   # and skipped unless GALILEO_PREFLIGHT_LIVE=1 (no spend by default)
 """
 
 import os, sys, json, datetime, time, pathlib, hashlib, subprocess, tempfile, textwrap
@@ -48,6 +51,175 @@ def _load_key(name: str) -> str:
         return os.environ.get(name, "")
 
 os.environ.setdefault("GALILEO_API_KEY", _load_key("GALILEO_API_KEY"))
+
+
+def _load_dotenv_quiet(path: pathlib.Path | None = None) -> None:
+    """Load KEY=VALUE from a local .env into os.environ (setdefault). Never prints values."""
+    env_path = path or (pathlib.Path(__file__).parent / ".env")
+    if not env_path.is_file():
+        return
+    try:
+        for raw in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            if not key:
+                continue
+            val = val.strip().strip("'").strip('"')
+            if val:
+                os.environ.setdefault(key, val)
+    except OSError:
+        pass
+
+
+def _openai_key_from_openclaw() -> bool:
+    """True if OpenClaw config has OPENAI_API_KEY (env block). Never echoes."""
+    cfg_path = pathlib.Path.home() / ".openclaw" / "openclaw.json"
+    try:
+        data = json.loads(cfg_path.read_text(encoding="utf-8"))
+        return bool((data.get("env") or {}).get("OPENAI_API_KEY"))
+    except Exception:
+        return False
+
+
+def _galileo_key_present() -> bool:
+    if os.environ.get("GALILEO_API_KEY"):
+        return True
+    return bool(_load_key("GALILEO_API_KEY"))
+
+
+def _openai_key_present() -> bool:
+    if os.environ.get("OPENAI_API_KEY"):
+        return True
+    return _openai_key_from_openclaw()
+
+# ── Constants (preflight-safe; no heavy SDK imports) ──────────────────────────
+PROJECT          = "rax-galileo-labs"
+LOG_STREAM       = "trinity-stack"
+MODEL            = "gpt-4o-mini"
+EMBED_MODEL      = "text-embedding-3-small"
+PROTECT_STAGE    = "trinity-protect"
+ADHERENCE_FLOOR  = 0.5            # Protect rule threshold (block below this)
+TOP_K            = 3
+KB_FILE          = pathlib.Path(__file__).parent / "knowledge_base.json"
+KB_POISON_FILE   = pathlib.Path(__file__).parent / "knowledge_base_poisoned.json"
+KB_CANONICAL     = pathlib.Path(__file__).parent / "corpus" / "ml_platform_kb.json"
+INDEX_CACHE_DIR  = pathlib.Path(__file__).parent / ".vector_cache"
+
+BLOCKED_MESSAGE = (
+    "[BLOCKED by Galileo Protect] This answer failed the grounding check "
+    "(context_adherence below threshold) and was withheld. The query has been "
+    "routed to a human platform engineer."
+)
+
+# Corpus restore candidates (XL-2 recovery / preflight). Prefer live KB, then bak, then canonical.
+KB_RESTORE_CANDIDATES = (
+    KB_FILE,
+    KB_FILE.with_suffix(".json.bak"),
+    KB_CANONICAL,
+)
+
+
+def run_preflight(*, live: bool = False) -> int:
+    """Offline fail-loud checks for env, corpus, and Protect stage readiness.
+
+    Never echoes secret values — only boolean presence.
+    Does not call OpenAI or Galileo APIs by default (no spend).
+    Optional live stage probe requires both ``live=True`` and
+    ``GALILEO_PREFLIGHT_LIVE=1``; otherwise prints Console checklist only.
+    Returns process exit code (0 = all required checks passed).
+    """
+    _load_dotenv_quiet()
+    # Re-apply OpenClaw Galileo header if .env left it empty
+    os.environ.setdefault("GALILEO_API_KEY", _load_key("GALILEO_API_KEY"))
+    if not os.environ.get("OPENAI_API_KEY") and _openai_key_from_openclaw():
+        cfg_path = pathlib.Path.home() / ".openclaw" / "openclaw.json"
+        try:
+            data = json.loads(cfg_path.read_text(encoding="utf-8"))
+            okey = (data.get("env") or {}).get("OPENAI_API_KEY", "")
+            if okey:
+                os.environ.setdefault("OPENAI_API_KEY", okey)
+        except Exception:
+            pass
+
+    print("Trinity Stack preflight (offline — no API spend)")
+    print(f"  Project/stream/stage constants: {PROJECT} / {LOG_STREAM} / {PROTECT_STAGE}")
+    failures: list[str] = []
+    warnings: list[str] = []
+
+    openai_ok = _openai_key_present()
+    galileo_ok = _galileo_key_present()
+    print(f"  OPENAI_API_KEY present:  {'yes' if openai_ok else 'NO'}")
+    print(f"  GALILEO_API_KEY present: {'yes' if galileo_ok else 'NO'}"
+          f"  (env, .env, or ~/.openclaw/openclaw.json mcp galileo headers)")
+    if not openai_ok:
+        failures.append("OPENAI_API_KEY missing — copy .env.example → .env and set it (never commit secrets)")
+    if not galileo_ok:
+        failures.append("GALILEO_API_KEY missing — set env/.env or OpenClaw mcp.servers.galileo headers")
+
+    restore_hit = next((p for p in KB_RESTORE_CANDIDATES if p.exists()), None)
+    if restore_hit is not None:
+        print(f"  Corpus restore path:     OK ({restore_hit.name})")
+    else:
+        print("  Corpus restore path:     MISSING")
+        failures.append(
+            f"No knowledge base at {KB_FILE.name}, {KB_FILE.name}.bak, or {KB_CANONICAL} — "
+            "run corpus/generate_ml_corpus.py or restore from backup"
+        )
+
+    print()
+    print("  Protect stage checklist (offline — confirm in Console, do not invent success):")
+    print(f"    1. Open https://app.galileo.ai → project `{PROJECT}`")
+    print(f"    2. Create Protect stage named `{PROTECT_STAGE}` if missing")
+    print("       (Console → Protect → New Stage). Stage creation requires the Console.")
+    print("    3. Ruleset may be created via API after the stage exists;")
+    print(f"       invoke_protect uses stage_name={PROTECT_STAGE}.")
+    print("    4. Live drills are ON HOLD until keys are greenlit — missing keys"
+          " must fail loud (no mock Protect success, no fake traces).")
+    warnings.append(
+        f"Protect stage `{PROTECT_STAGE}` existence is a Console checklist item — "
+        "preflight does not claim the stage exists"
+    )
+
+    if live:
+        allow_live = os.environ.get("GALILEO_PREFLIGHT_LIVE", "").strip() == "1"
+        print()
+        if not allow_live:
+            print("  Live check: SKIPPED (no spend).")
+            print("    `--preflight-live` is the opt-in flag; also set GALILEO_PREFLIGHT_LIVE=1 when a")
+            print("    free metadata probe is greenlit. Until then preflight stays offline —")
+            print("    no OpenAI calls, no invoke_protect, no mock stage success.")
+            warnings.append("Live Protect stage probe skipped (GALILEO_PREFLIGHT_LIVE!=1)")
+        elif not galileo_ok:
+            failures.append("Live probe requested but GALILEO_API_KEY is missing")
+        else:
+            # Intentionally no network: avoid API spend while drills are on hold.
+            # A future free stage-list metadata call can plug in here; never invoke_protect.
+            print("  Live check: NOT CALLED (no-spend hold).")
+            print(f"    Confirm Protect stage `{PROTECT_STAGE}` in Console before XL-4 / Protect drills.")
+            print("    Do not treat missing stage as success; do not fake traces or screenshots.")
+            warnings.append(
+                "GALILEO_PREFLIGHT_LIVE=1 set but network probe withheld — Console verification required"
+            )
+
+    print()
+    for w in warnings:
+        print(f"  WARN: {w}")
+    if failures:
+        print("PREFLIGHT FAILED:")
+        for f in failures:
+            print(f"  - {f}")
+        print("Fix the items above before Quick Start / live drills. See .env.example and README.")
+        return 1
+    print("PREFLIGHT OK (required env + corpus path). Protect stage: verify in Console before XL-4.")
+    return 0
+
+
+# Cheap path: --preflight / --preflight-live before LangGraph / Galileo / OpenAI imports.
+if __name__ == "__main__" and ("--preflight" in sys.argv[1:] or "--preflight-live" in sys.argv[1:]):
+    sys.exit(run_preflight(live="--preflight-live" in sys.argv[1:]))
 
 # ── Imports ───────────────────────────────────────────────────────────────────
 from typing import TypedDict, Optional, List, Dict
@@ -85,25 +257,6 @@ try:
     _PROTECT_AVAILABLE = True
 except Exception:  # SDK older than Protect support
     _PROTECT_AVAILABLE = False
-
-# ── Constants ─────────────────────────────────────────────────────────────────
-PROJECT          = "rax-galileo-labs"
-LOG_STREAM       = "trinity-stack"
-MODEL            = "gpt-4o-mini"
-EMBED_MODEL      = "text-embedding-3-small"
-PROTECT_STAGE    = "trinity-protect"
-ADHERENCE_FLOOR  = 0.5            # Protect rule threshold (block below this)
-TOP_K            = 3
-KB_FILE          = pathlib.Path(__file__).parent / "knowledge_base.json"
-KB_POISON_FILE   = pathlib.Path(__file__).parent / "knowledge_base_poisoned.json"
-KB_CANONICAL     = pathlib.Path(__file__).parent / "corpus" / "ml_platform_kb.json"
-INDEX_CACHE_DIR  = pathlib.Path(__file__).parent / ".vector_cache"
-
-BLOCKED_MESSAGE = (
-    "[BLOCKED by Galileo Protect] This answer failed the grounding check "
-    "(context_adherence below threshold) and was withheld. The query has been "
-    "routed to a human platform engineer."
-)
 
 # ── Seed engineering docs (canonical IDs tr1–in3). Full lab-scale corpus is
 # generated by corpus/generate_ml_corpus.py → knowledge_base.json (~1000 chunks).
@@ -710,4 +863,4 @@ if __name__ == "__main__":
         if query:
             run_query(graph, query)
     else:
-        print("Usage: python app.py 'Your question'  |  --batch  |  --poison-corpus  |  --restore-corpus  |  --kb-stats")
+        print("Usage: python app.py 'Your question'  |  --batch  |  --preflight  |  --poison-corpus  |  --restore-corpus  |  --kb-stats")

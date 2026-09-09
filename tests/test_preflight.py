@@ -30,12 +30,30 @@ def test_env_example_lists_required_vars():
     assert "trinity-stack" in text
     assert "Agent Control" in text
     assert "trinity-protect" in text  # deprecated mention
+    # Pin hosted Agent Control path (legacy agent-control.galileo.ai SSL-mismatches)
+    assert "AGENT_CONTROL_URL=https://api.galileo.ai/agent-control" in text
+    assert "agent-control.galileo.ai" not in text or "SSL" in text
     # placeholders only — no obvious live secret shapes
     assert "sk-proj-" not in text
     assert "sk-your-openai-key" in text
     # useful optional starters retained from env preflight PR
     assert "GOOGLE_API_KEY=" in text or "# GOOGLE_API_KEY=" in text
     assert "BEDROCK_MODEL_ID=" in text or "# BEDROCK_MODEL_ID=" in text
+
+
+def test_preflight_prints_api_path_agent_control_url():
+    with tempfile.TemporaryDirectory() as home:
+        env = {
+            **{k: v for k, v in os.environ.items() if k not in ("OPENAI_API_KEY", "GALILEO_API_KEY", "Galileo_API_Key", "AGENT_CONTROL_URL")},
+            "OPENAI_API_KEY": "sk-test-placeholder-not-real",
+            "GALILEO_API_KEY": "galileo-test-placeholder-not-real",
+            "HOME": home,
+        }
+        proc = _run_preflight(env, "--preflight")
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, out
+    assert "https://api.galileo.ai/agent-control" in out
+    assert "https://agent-control.galileo.ai" not in out
 
 
 def test_preflight_fails_loud_without_keys():

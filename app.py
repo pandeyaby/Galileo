@@ -53,13 +53,35 @@ def _load_key(name: str) -> str:
     except Exception:
         return os.environ.get(name, "")
 
-def _normalize_galileo_api_key() -> None:
-    """Map Galileo_API_Key / OpenClaw header → GALILEO_API_KEY. Never prints values."""
+_GALILEO_KEY_ALIAS_WARNED = False
+
+
+def _normalize_galileo_api_key(*, warn: bool = True) -> None:
+    """Map Galileo_API_Key / OpenClaw header → GALILEO_API_KEY. Never prints values.
+
+    Canonical name for Cloud Agents / CI / .env is ``GALILEO_API_KEY`` (exact case).
+    ``Galileo_API_Key`` is a one-shot compat shim only — prefer the canonical name.
+    """
+    global _GALILEO_KEY_ALIAS_WARNED
     if os.environ.get("GALILEO_API_KEY"):
         return
-    alt = os.environ.get("Galileo_API_Key") or _load_key("GALILEO_API_KEY")
-    if alt:
-        os.environ["GALILEO_API_KEY"] = alt
+    alias = os.environ.get("Galileo_API_Key")
+    if alias:
+        os.environ["GALILEO_API_KEY"] = alias
+        if warn and not _GALILEO_KEY_ALIAS_WARNED:
+            _GALILEO_KEY_ALIAS_WARNED = True
+            print(
+                "WARNING: Galileo_API_Key is a legacy alias. "
+                "Canonical env name is GALILEO_API_KEY (exact case). "
+                "Cloud Agents / CI must set OPENAI_API_KEY and GALILEO_API_KEY — "
+                "not Galileo_API_Key. Compatibility shim applied once at startup.",
+                file=sys.stderr,
+                flush=True,
+            )
+        return
+    openclaw = _load_key("GALILEO_API_KEY")
+    if openclaw:
+        os.environ["GALILEO_API_KEY"] = openclaw
 
 _normalize_galileo_api_key()
 os.environ.setdefault("GALILEO_API_KEY", _load_key("GALILEO_API_KEY"))
@@ -159,11 +181,35 @@ def _agent_control_url() -> str:
     """
     explicit = (os.environ.get("AGENT_CONTROL_URL") or "").strip().rstrip("/")
     if explicit:
+        # Soft-warn on the known-bad bare host (SSL mismatch).
+        host = explicit.split("://", 1)[-1].split("/", 1)[0].lower()
+        if host.startswith("agent-control."):
+            print(
+                f"WARNING: AGENT_CONTROL_URL host {host!r} SSL-mismatches. "
+                f"Prefer {DEFAULT_AGENT_CONTROL_URL}",
+                file=sys.stderr,
+                flush=True,
+            )
         return explicit
     api = (os.environ.get("GALILEO_API_URL") or "https://api.galileo.ai").strip().rstrip("/")
     if api.endswith("/agent-control"):
         return api
     return f"{api}/agent-control"
+
+
+def _controls_zero_fail_message(url: str, n: int) -> str:
+    """Loud fail copy when a live Agent Control call sees 0 attached Controls."""
+    return (
+        f"controls attached == {n} after live Agent Control call.\n"
+        f"  AGENT_CONTROL_URL={url}\n"
+        f"  Attach a POST Control in Console → project `{PROJECT}` → "
+        f"log stream `{LOG_STREAM}` → Controls tab "
+        f"(agent `{_agent_name()}`).\n"
+        "  Without attached Controls, XL-4 / protect blocks will not fire "
+        "(llm_judge_fallback only).\n"
+        "  Troubleshoot: https://pandeyaby.github.io/Galileo/troubleshooter/"
+        "#agent-gives-confident-fluent-wrong-answers-evals-look-ok-except-one-metric"
+    )
 
 def run_preflight(*, live: bool = False) -> int:
     """Offline fail-loud checks. No paid API calls unless live probe is greenlit."""
@@ -178,12 +224,16 @@ def run_preflight(*, live: bool = False) -> int:
     print(f"  Deprecated classic stage name (do not use): {PROTECT_STAGE}")
     print(f"  OPENAI_API_KEY present:  {'YES' if keys['OPENAI_API_KEY'] else 'NO'}")
     print(f"  GALILEO_API_KEY present: {'YES' if keys['GALILEO_API_KEY'] else 'NO'}")
-    print("    (env, .env, Galileo_API_Key alias, or ~/.openclaw galileo headers)")
+    print("    Canonical names (Cloud Agents / CI): OPENAI_API_KEY + GALILEO_API_KEY")
+    print("    Compat: Galileo_API_Key alias → GALILEO_API_KEY (warns once); or ~/.openclaw headers")
 
     if not keys["OPENAI_API_KEY"]:
         failures.append("OPENAI_API_KEY missing — copy .env.example → .env (never commit secrets)")
     if not keys["GALILEO_API_KEY"]:
-        failures.append("GALILEO_API_KEY missing — set env/.env or Galileo_API_Key / OpenClaw headers")
+        failures.append(
+            "GALILEO_API_KEY missing — set exact name GALILEO_API_KEY "
+            "(Cloud Agents/CI); Galileo_API_Key alias works locally with a warning"
+        )
 
     kb_ok = any(p.is_file() for p in _KB_RESTORE_CANDIDATES)
     print(f"  knowledge_base / restore path: {'OK' if kb_ok else 'MISSING'}")
@@ -254,8 +304,11 @@ def _live_agent_control_probe() -> int:
         target_id=str(logger.log_stream_id),
     )
     n = len(getattr(agent_control, "get_server_controls", lambda: [])() or [])
+    if n == 0:
+        print("  Live check: FAIL (controls attached: 0)")
+        print(f"  {_controls_zero_fail_message(url, n)}")
+        return 1
     print(f"  Live check: OK (log_stream_id resolved; controls attached: {n})")
-    print("    If controls=0, create+attach a POST Control in Console before XL-4 expects blocks.")
     return 0
 
 # Cheap path: --preflight / --preflight-live / --demo before LangGraph / Galileo / OpenAI imports.
@@ -642,6 +695,15 @@ def ensure_agent_control(logger: GalileoLogger | None = None) -> bool:
                 target_type=os.environ.get("AGENT_CONTROL_TARGET_TYPE", "log_stream"),
                 target_id=str(log_stream_id),
             )
+            n = len(getattr(agent_control, "get_server_controls", lambda: [])() or [])
+            if n == 0:
+                # Loud warning on first live init — still allow llm_judge_fallback path,
+                # but surface the Console attach requirement (rax-galileo-labs / trinity-stack).
+                print(
+                    "WARNING: " + _controls_zero_fail_message(url, n),
+                    file=sys.stderr,
+                    flush=True,
+                )
             _ac_initialized = True
             _ac_init_error = None
             return True

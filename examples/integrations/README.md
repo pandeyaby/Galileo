@@ -1,7 +1,8 @@
 # Galileo third-party integration starters
 
 Thin, **real** examples that import official SDKs and log to Galileo when keys are present.
-No silent mocks — missing packages/keys exit with a clear error (exit code 2).
+No silent mocks. Most starters exit 2 when required keys/packages are missing.
+**Google ADK / Gemini** print `SMOKE SKIP` (exit 0) when Google keys are absent vs `SMOKE FAIL` when keys are present but the live call errors — see [`SMOKE-RESULTS.md`](SMOKE-RESULTS.md).
 
 Cookbook recipes (Stripe / MongoDB Atlas / Elasticsearch / Instruction Adherence):
 [`COOKBOOKS.md`](COOKBOOKS.md). OTel deployment patterns: [`docs/OTEL-DEPLOYMENT.md`](../../docs/OTEL-DEPLOYMENT.md).
@@ -36,8 +37,8 @@ Framework-specific keys:
 
 | Starter | Extra keys |
 |---------|------------|
-| Google ADK | `GOOGLE_API_KEY` or `GEMINI_API_KEY` |
-| Gemini / Enterprise | `GOOGLE_API_KEY` **or** `GOOGLE_APPLICATION_CREDENTIALS` + `VERTEX_PROJECT` |
+| Google ADK | `GOOGLE_API_KEY` or `GEMINI_API_KEY` (absent → `SMOKE SKIP`, not FAIL) |
+| Gemini / Enterprise | `GOOGLE_API_KEY` **or** `GOOGLE_APPLICATION_CREDENTIALS` + `VERTEX_PROJECT` (absent → `SMOKE SKIP`) |
 | Bedrock | AWS creds (`AWS_ACCESS_KEY_ID` / `AWS_PROFILE`) + `BEDROCK_MODEL_ID` |
 | Vercel AI | `OPENAI_API_KEY` + `GALILEO_API_KEY` |
 | Stripe TS agent | `STRIPE_SECRET_KEY` + `OPENAI_API_KEY` + `GALILEO_API_KEY` |

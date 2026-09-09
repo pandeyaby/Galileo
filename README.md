@@ -4,11 +4,13 @@ An engineering assistant for ML platform work — training, inference, infra —
 
 ## For players
 
-1. **Keys stay local:** `cp .env.example .env` and fill in `OPENAI_API_KEY` + `GALILEO_API_KEY`. **Never commit secrets.**
+1. **Keys stay local:** `cp .env.example .env` and fill in exact names `OPENAI_API_KEY` + `GALILEO_API_KEY`. **Never commit secrets.** Cloud Agents / CI must use those exact names (not `Galileo_API_Key` — local alias only, warns once).
 2. **Run the demo first:** `make demo` (or `python examples/player_demo.py` / `python app.py --demo`) — offline preflight, short baseline, XL-2 poison + restore, Console links, fleet-vs-Galileo summary, cost note.
 3. **Stuck on Galileo?** Use the [troubleshooter](https://pandeyaby.github.io/Galileo/troubleshooter/) (auth, missing traces, metrics, integrations, Protect → Agent Control). Do not rebuild that catalog here.
 
-`AGENT_CONTROL_URL` is pinned to `https://api.galileo.ai/agent-control` in `.env.example` (the `agent-control.galileo.ai` host SSL-mismatches).
+`AGENT_CONTROL_URL` is pinned to `https://api.galileo.ai/agent-control` in `.env.example` (the `agent-control.galileo.ai` host SSL-mismatches). Live probes fail loudly when controls attached == 0 — attach a POST Control on `rax-galileo-labs` / `trinity-stack`.
+
+**Filing friction:** open the troubleshooter first (demo/`make demo` prints deep links for missing keys, 0 controls, SSL/URL mismatch, protect blocks). If still stuck, use the [player-friction issue template](https://github.com/pandeyaby/Galileo/issues/new?template=player-friction.yml) — include symptom, command, `protect_path`/controls count, and OS; paste no secrets.
 
 ---
 

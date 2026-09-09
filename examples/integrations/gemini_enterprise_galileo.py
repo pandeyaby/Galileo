@@ -29,6 +29,7 @@ from _common import project_stream, require_galileo
 def main() -> int:
     err = require_galileo()
     if err:
+        print("SMOKE FAIL: GALILEO_API_KEY required (do not invent keys).")
         return err
 
     has_api_key = bool(os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY"))
@@ -36,16 +37,19 @@ def main() -> int:
         os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") and os.environ.get("VERTEX_PROJECT")
     )
     if not has_api_key and not has_vertex:
+        # Absent Google/Vertex creds → SKIP (not FAIL). Do not invent keys.
         print(
-            "ERROR: set GOOGLE_API_KEY (Gemini API) or "
-            "GOOGLE_APPLICATION_CREDENTIALS + VERTEX_PROJECT (Vertex/Enterprise). No mock."
+            "SMOKE SKIP: missing GOOGLE_API_KEY/GEMINI_API_KEY "
+            "or GOOGLE_APPLICATION_CREDENTIALS+VERTEX_PROJECT. "
+            "Required for Gemini/Vertex live smoke. Do not invent keys. "
+            "See examples/integrations/SMOKE-RESULTS.md"
         )
-        return 2
+        return 0
 
     try:
         from google import genai
     except ImportError:
-        print("ERROR: install google-genai: pip install google-genai")
+        print("SMOKE FAIL: install google-genai: pip install google-genai")
         return 2
 
     project, stream = project_stream("gemini-enterprise-integration")
@@ -76,7 +80,7 @@ def main() -> int:
     try:
         resp = client.models.generate_content(model=model, contents=query)
     except Exception as exc:
-        print(f"ERROR: Gemini generate failed: {type(exc).__name__}: {exc}")
+        print(f"SMOKE FAIL: Gemini generate failed: {type(exc).__name__}: {exc}")
         return 2
 
     output = (getattr(resp, "text", None) or str(resp)).strip()
@@ -96,7 +100,11 @@ def main() -> int:
     print(f"galileo: {project}/{stream} path={path}")
     print("── answer ──")
     print(output[:800])
-    return 0 if output else 1
+    if not output:
+        print("SMOKE FAIL: empty Gemini output")
+        return 1
+    print("SMOKE PASS")
+    return 0
 
 
 if __name__ == "__main__":

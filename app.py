@@ -63,20 +63,32 @@ def _normalize_galileo_api_key() -> None:
 _normalize_galileo_api_key()
 os.environ.setdefault("GALILEO_API_KEY", _load_key("GALILEO_API_KEY"))
 
+def _openai_key_from_openclaw() -> bool:
+    """True if OpenClaw config has OPENAI_API_KEY (env block). Never echoes."""
+    cfg_path = pathlib.Path.home() / ".openclaw" / "openclaw.json"
+    try:
+        data = json.loads(cfg_path.read_text(encoding="utf-8"))
+        return bool((data.get("env") or {}).get("OPENAI_API_KEY"))
+    except Exception:
+        return False
+
+
 def _load_dotenv(path: pathlib.Path | None = None) -> None:
     """Load KEY=VALUE from a local .env into os.environ (setdefault). Never prints values."""
     env_path = path or (pathlib.Path(__file__).parent / ".env")
     if not env_path.is_file():
         return
     try:
-        for raw in env_path.read_text().splitlines():
+        for raw in env_path.read_text(encoding="utf-8").splitlines():
             line = raw.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, _, val = line.partition("=")
             key = key.strip()
+            if not key:
+                continue
             val = val.strip().strip("'").strip('"')
-            if key:
+            if val:
                 os.environ.setdefault(key, val)
     except OSError:
         pass
@@ -120,8 +132,18 @@ _KB_RESTORE_CANDIDATES = (
 def _keys_present() -> dict:
     """Boolean key presence only — never return secret values."""
     _normalize_galileo_api_key()
+    openai_ok = bool(os.environ.get("OPENAI_API_KEY")) or _openai_key_from_openclaw()
+    if openai_ok and not os.environ.get("OPENAI_API_KEY"):
+        cfg_path = pathlib.Path.home() / ".openclaw" / "openclaw.json"
+        try:
+            data = json.loads(cfg_path.read_text(encoding="utf-8"))
+            okey = (data.get("env") or {}).get("OPENAI_API_KEY", "")
+            if okey:
+                os.environ.setdefault("OPENAI_API_KEY", okey)
+        except Exception:
+            pass
     return {
-        "OPENAI_API_KEY": bool(os.environ.get("OPENAI_API_KEY")),
+        "OPENAI_API_KEY": bool(os.environ.get("OPENAI_API_KEY")) or _openai_key_from_openclaw(),
         "GALILEO_API_KEY": bool(os.environ.get("GALILEO_API_KEY")),
     }
 

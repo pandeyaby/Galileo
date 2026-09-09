@@ -226,22 +226,29 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Configure credentials
+### 2. Configure credentials + preflight
+
+Required vars are listed in [`.env.example`](.env.example) (names/placeholders only):
 
 ```bash
 cp .env.example .env   # fill in locally — never commit secrets
 export OPENAI_API_KEY="sk-..."       # embeddings + LLM
 export GALILEO_API_KEY="..."          # app.galileo.ai → Settings → API Keys
 # Optional alias normalized by app.py: Galileo_API_Key
+# Optional: GALILEO_API_KEY / OPENAI_API_KEY from ~/.openclaw/openclaw.json
 ```
 
-**Create a Galileo project** called `rax-galileo-labs` with a log stream named `trinity-stack` before running — or edit the `PROJECT` and `LOG_STREAM` constants at the top of `app.py`.
+**Create a Galileo project** called `rax-galileo-labs` with a log stream named `trinity-stack` before running — or edit the `PROJECT` and `LOG_STREAM` constants at the top of `app.py`. For XL-4, attach a **POST** Agent Control to that stream (classic Protect stage `trinity-protect` is deprecated — see [Galileo Setup](#galileo-setup)).
 
-Offline fail-loud check (no API spend):
+Run the **offline** preflight before any live baseline or drill (key presence as booleans, corpus restore path, Agent Control Console checklist — **no OpenAI/Galileo API spend**):
 
 ```bash
 python app.py --preflight
+# Optional opt-in live metadata probe (still no Control create):
+# GALILEO_PREFLIGHT_LIVE=1 python app.py --preflight-live
 ```
+
+Missing keys fail loud. Preflight never echoes secret values and never fakes Control success.
 
 ### 3. Run the baseline
 
@@ -446,8 +453,10 @@ See `requirements.txt`.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `OPENAI_API_KEY` | ✅ | OpenAI API key (embeddings + LLM) |
-| `GALILEO_API_KEY` | ✅ | Galileo API key — `app.galileo.ai` → Settings → API Keys |
+| `OPENAI_API_KEY` | ✅ | OpenAI API key (embeddings + LLM; or OpenClaw `env.OPENAI_API_KEY`) |
+| `GALILEO_API_KEY` | ✅ | Galileo API key — `app.galileo.ai` → Settings → API Keys (or OpenClaw mcp galileo headers / `Galileo_API_Key` alias) |
+
+Optional keys for integration starters (`GOOGLE_*` / `GEMINI_*` / `AWS_*` / Bedrock, etc.) are documented in `.env.example` and [`examples/integrations/SMOKE-RESULTS.md`](examples/integrations/SMOKE-RESULTS.md).
 
 ---
 

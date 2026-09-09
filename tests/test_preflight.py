@@ -33,12 +33,16 @@ def test_env_example_lists_required_vars():
     # Pin hosted Agent Control path (legacy agent-control.galileo.ai SSL-mismatches)
     assert "AGENT_CONTROL_URL=https://api.galileo.ai/agent-control" in text
     assert "agent-control.galileo.ai" not in text or "SSL" in text
+    # Cloud Agents / CI must use exact canonical names
+    assert "Cloud Agents" in text or "CI" in text
+    assert "exact" in text.lower() or "GALILEO_API_KEY" in text
     # placeholders only — no obvious live secret shapes
     assert "sk-proj-" not in text
     assert "sk-your-openai-key" in text
     # useful optional starters retained from env preflight PR
     assert "GOOGLE_API_KEY=" in text or "# GOOGLE_API_KEY=" in text
     assert "BEDROCK_MODEL_ID=" in text or "# BEDROCK_MODEL_ID=" in text
+    assert "SMOKE SKIP" in text or "SKIP" in text
 
 
 def test_preflight_prints_api_path_agent_control_url():

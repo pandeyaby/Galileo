@@ -37,6 +37,9 @@ def test_player_demo_fails_loud_without_keys():
     assert "Demo aborted" in out
     assert "never commit secrets" in out.lower()
     assert "troubleshooter" in out.lower()
+    # deep-link into missing-keys runbook (or generic troubleshooter)
+    assert "no-galileo-api-key-found" in out or "pandeyaby.github.io/Galileo/troubleshooter" in out
+    assert "player-friction" in out or "issues/new" in out
     # never echo secret values
     assert "sk-proj-" not in out
 
@@ -68,3 +71,28 @@ def test_readme_for_players_section():
     assert "troubleshooter" in text.lower()
     assert "Never commit secrets" in text or "never commit secrets" in text
     assert "https://api.galileo.ai/agent-control" in text
+    assert "player-friction" in text or "Filing friction" in text
+    assert "OPENAI_API_KEY" in text and "GALILEO_API_KEY" in text
+
+
+def test_player_friction_issue_template_exists():
+    path = ROOT / ".github" / "ISSUE_TEMPLATE" / "player-friction.yml"
+    assert path.is_file(), "missing player-friction issue template"
+    text = path.read_text(encoding="utf-8")
+    assert "symptom" in text.lower() or "Symptom" in text
+    assert "protect_path" in text
+    assert "troubleshooter" in text.lower()
+    assert "OPENAI_API_KEY" in text
+    assert "controls" in text.lower()
+
+
+def test_ci_workflow_offline_safe():
+    path = ROOT / ".github" / "workflows" / "ci.yml"
+    assert path.is_file(), "missing CI workflow"
+    text = path.read_text(encoding="utf-8")
+    assert "app.py --preflight" in text
+    assert "pytest" in text
+    assert "workflow_dispatch" in text
+    assert "live-smoke" in text
+    # default path must not require real secrets spend
+    assert "GALILEO_PREFLIGHT_LIVE" in text

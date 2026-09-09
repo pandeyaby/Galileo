@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import sys
+import types
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -73,13 +75,59 @@ def test_preflight_live_skipped_without_env(monkeypatch, capsys, tmp_path):
     assert "Live check: SKIPPED" in out
 
 
-def test_normalize_galileo_api_key_alias(monkeypatch):
+def test_normalize_galileo_api_key_alias(monkeypatch, capsys):
     import app as app_mod
 
     monkeypatch.delenv("GALILEO_API_KEY", raising=False)
     monkeypatch.setenv("Galileo_API_Key", "from-alias")
+    monkeypatch.setattr(app_mod, "_GALILEO_KEY_ALIAS_WARNED", False)
     app_mod._normalize_galileo_api_key()
     assert os.environ.get("GALILEO_API_KEY") == "from-alias"
+    err = capsys.readouterr().err
+    assert "GALILEO_API_KEY" in err
+    assert "legacy alias" in err.lower() or "canonical" in err.lower()
+    # second call does not warn again
+    app_mod._normalize_galileo_api_key()
+    err2 = capsys.readouterr().err
+    assert err2 == ""
+
+
+def test_live_probe_fails_loud_when_zero_controls(monkeypatch, capsys):
+    import app as app_mod
+
+    monkeypatch.setenv("GALILEO_API_KEY", "g-test")
+    monkeypatch.setenv("AGENT_CONTROL_URL", "https://api.galileo.ai/agent-control")
+
+    fake_logger = types.SimpleNamespace(log_stream_id="ls-1", project_id="p-1")
+
+    fake_ac = types.ModuleType("agent_control")
+    fake_ac.init = lambda **kwargs: None  # type: ignore[attr-defined]
+    fake_ac.get_server_controls = lambda: []  # type: ignore[attr-defined]
+
+    fake_galileo = types.ModuleType("galileo")
+    fake_galileo.GalileoLogger = lambda **k: fake_logger  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(sys.modules, "agent_control", fake_ac)
+    monkeypatch.setitem(sys.modules, "galileo", fake_galileo)
+
+    code = app_mod._live_agent_control_probe()
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "controls attached: 0" in out or "controls attached == 0" in out
+    assert "rax-galileo-labs" in out
+    assert "trinity-stack" in out
+    assert "api.galileo.ai/agent-control" in out
+
+
+def test_agent_control_url_warns_on_legacy_host(monkeypatch, capsys):
+    import app as app_mod
+
+    monkeypatch.setenv("AGENT_CONTROL_URL", "https://agent-control.galileo.ai")
+    url = app_mod._agent_control_url()
+    assert url == "https://agent-control.galileo.ai"
+    err = capsys.readouterr().err
+    assert "SSL" in err
+    assert "api.galileo.ai/agent-control" in err
 
 
 def test_agent_control_url_derivation(monkeypatch):

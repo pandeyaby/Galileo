@@ -1,0 +1,99 @@
+name: Player friction
+description: Report a Trinity Stack / Galileo player-path failure (demo, keys, Agent Control).
+title: "[player] "
+labels: ["player-friction"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Check the troubleshooter first** (do not rebuild it):
+        https://pandeyaby.github.io/Galileo/troubleshooter/
+
+        Common deep links:
+        - Missing keys → [#no-galileo-api-key-found-before-any-traces-are-logged](https://pandeyaby.github.io/Galileo/troubleshooter/#no-galileo-api-key-found-before-any-traces-are-logged)
+        - Key set but SDK says missing → [#i-set-the-galileo-api-key-but-the-sdk-still-says-it-is-missing](https://pandeyaby.github.io/Galileo/troubleshooter/#i-set-the-galileo-api-key-but-the-sdk-still-says-it-is-missing)
+        - SSL / Console↔API URL → [#self-hosted-console-api-url-derivation-cert-failures](https://pandeyaby.github.io/Galileo/troubleshooter/#self-hosted-console-api-url-derivation-cert-failures)
+        - Protect / grounding miss → [#agent-gives-confident-fluent-wrong-answers-evals-look-ok-except-one-metric](https://pandeyaby.github.io/Galileo/troubleshooter/#agent-gives-confident-fluent-wrong-answers-evals-look-ok-except-one-metric)
+
+        **Never paste API keys or `.env` values into this issue.**
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Before filing
+      options:
+        - label: I opened the [troubleshooter](https://pandeyaby.github.io/Galileo/troubleshooter/) and searched my symptom
+          required: true
+        - label: I ran `python app.py --preflight` (or `make preflight`) and read the output
+          required: true
+        - label: Keys use exact names `OPENAI_API_KEY` + `GALILEO_API_KEY` (not `Galileo_API_Key` in CI)
+          required: true
+        - label: `AGENT_CONTROL_URL` is `https://api.galileo.ai/agent-control` (not bare agent-control.galileo.ai)
+          required: false
+        - label: This report contains **no** secrets / API keys / `.env` values
+          required: true
+
+  - type: dropdown
+    id: symptom
+    attributes:
+      label: Symptom
+      description: Closest match (or Other).
+      options:
+        - Missing keys / preflight failed
+        - controls attached == 0 after live call
+        - SSL / AGENT_CONTROL_URL mismatch
+        - Protect block unexpected (or never blocks)
+        - Demo / make demo failed mid-run
+        - Integration smoke SKIP (Google ADK / Gemini keys absent)
+        - Integration smoke FAIL (keys present, call failed)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command run
+      description: Exact command(s). Redact secrets.
+      placeholder: |
+        make demo
+        # or
+        python app.py --preflight
+        python app.py --preflight-live
+    validations:
+      required: true
+
+  - type: input
+    id: protect_path
+    attributes:
+      label: protect_path (if printed)
+      description: e.g. agent_control | llm_judge_fallback | (blank)
+      placeholder: agent_control
+
+  - type: input
+    id: controls_count
+    attributes:
+      label: Controls attached count (if printed)
+      description: From preflight-live / demo output. Use 0 / N / unknown.
+      placeholder: "0"
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Cloud Agent / CI
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: What you expected vs what happened
+      description: Paste non-secret log lines only (no keys). Link the troubleshooter section you tried.
+    validations:
+      required: true

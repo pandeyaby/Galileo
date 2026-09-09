@@ -21,22 +21,28 @@ from _common import project_stream, require_galileo
 async def _run() -> int:
     err = require_galileo()
     if err:
+        print("SMOKE FAIL: GALILEO_API_KEY required (do not invent keys).")
         return err
     if not os.environ.get("GOOGLE_API_KEY") and not os.environ.get("GEMINI_API_KEY"):
-        print("ERROR: GOOGLE_API_KEY (or GEMINI_API_KEY) required (no mock).")
-        return 2
+        # Absent Google keys → SKIP (not FAIL). Re-run after setting real keys.
+        print(
+            "SMOKE SKIP: missing GOOGLE_API_KEY or GEMINI_API_KEY. "
+            "Required for Google ADK live smoke. Do not invent keys. "
+            "See examples/integrations/SMOKE-RESULTS.md"
+        )
+        return 0
 
     try:
         from galileo_adk import GalileoADKPlugin
     except ImportError:
-        print("ERROR: install galileo-adk: pip install galileo-adk")
+        print("SMOKE FAIL: install galileo-adk: pip install galileo-adk")
         return 2
     try:
         from google.adk.agents import LlmAgent
         from google.adk.runners import Runner
         from google.genai import types
     except ImportError:
-        print("ERROR: install google-adk: pip install google-adk")
+        print("SMOKE FAIL: install google-adk: pip install google-adk")
         return 2
 
     project, stream = project_stream("google-adk-integration")
@@ -54,27 +60,35 @@ async def _run() -> int:
         try:
             runner = Runner(agent=agent, plugins=[plugin])
         except TypeError as exc:
-            print(f"ERROR: google-adk Runner API mismatch: {exc}")
+            print(f"SMOKE FAIL: google-adk Runner API mismatch: {exc}")
             return 2
 
     query = "In one sentence: what is gradient checkpointing?"
     message = types.Content(parts=[types.Part(text=query)])
     final = ""
-    async for event in runner.run_async(
-        user_id="dizzygraph",
-        session_id="adk-starter",
-        new_message=message,
-    ):
-        if getattr(event, "is_final_response", lambda: False)():
-            content = getattr(event, "content", None)
-            parts = getattr(content, "parts", None) or []
-            if parts:
-                final = getattr(parts[0], "text", "") or ""
+    try:
+        async for event in runner.run_async(
+            user_id="dizzygraph",
+            session_id="adk-starter",
+            new_message=message,
+        ):
+            if getattr(event, "is_final_response", lambda: False)():
+                content = getattr(event, "content", None)
+                parts = getattr(content, "parts", None) or []
+                if parts:
+                    final = getattr(parts[0], "text", "") or ""
+    except Exception as exc:
+        print(f"SMOKE FAIL: ADK run error: {type(exc).__name__}: {exc}")
+        return 1
 
     print(f"galileo-adk: {project}/{stream}")
     print("── answer ──")
     print((final or "(no final response)").strip()[:800])
-    return 0 if final else 1
+    if not final:
+        print("SMOKE FAIL: no final response from ADK runner")
+        return 1
+    print("SMOKE PASS")
+    return 0
 
 
 def main() -> int:

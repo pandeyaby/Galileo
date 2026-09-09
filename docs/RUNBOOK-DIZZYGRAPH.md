@@ -56,7 +56,7 @@ Expect: pytest green, HITL interrupt→resume, node trace printed, Mermaid flowc
 - Lab-scale engineering KB: ~1000 chunks via `corpus/generate_ml_corpus.py`
   (`python app.py --kb-stats`). Embeddings cache under `.vector_cache/`.
 - Live **responder is a `LoopNode`** whose **checker is live Galileo Protect**
-  (`invoke_protect` / LLM-judge fallback) — not a keyword heuristic.
+  (`agent_control` POST Controls / LLM-judge fallback) — not a keyword heuristic.
   Non-convergence → fleet `loop_non_converge` with Protect status/score/path.
 - When Protect triggers on the final gate, `interrupt()` pauses for HITL
   approve/edit; `POST /api/runs/{id}/resume` continues.
@@ -81,7 +81,7 @@ python trinity_dizzy.py --viz --write-evidence \
 
 - Dense retrieval: OpenAI `text-embedding-3-small` + cosine index over the engineering KB  
 - Responder: `gpt-4o-mini`  
-- Protect: `invoke_protect` (or LLM-judge fallback if Protect metric unavailable)  
+- Protect / Agent Control: `evaluate_controls(stage='post')` (or LLM-judge fallback if Control API unavailable)  
 - Telemetry path: fleet helpers still available from `app.py` / `fleet/`  
 - Trust: GalileoLogger flush → project `rax-galileo-labs` / stream `trinity-dizzy`
 

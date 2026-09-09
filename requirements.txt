@@ -7,7 +7,7 @@ langchain-protocol>=0.0.17
 numpy>=2.0
 psutil>=6.0
 openai>=1.0
-# Agent Control SDK (galileo 2.3.0 migration path from invoke_protect)
+# Agent Control SDK (primary protect path; replaces classic invoke_protect)
 agent-control-sdk[galileo]>=8.0.0
 # DizzyGraph (graphs made of loops + meta-loops)
 pydantic>=2.0

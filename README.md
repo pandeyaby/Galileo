@@ -1,6 +1,6 @@
 # Trinity Stack
 
-An engineering assistant for ML platform work — training, inference, infra — with retrieval, tools, and a Protect gate in the loop.
+An engineering assistant for ML platform work — training, inference, infra — with retrieval, tools, and an Agent Control gate in the loop.
 
 The interesting part isn’t the happy path. It’s what happens when something quietly goes wrong: bad retrieval, a stuck process, a slow tool, a quality drop that looks like a win in fleet metrics. This repo has drills for those cases, traces you can open in Galileo, and a short runbook next to each one.
 
@@ -141,7 +141,7 @@ The on-call engineer got a positive signal. The users got worse answers. XL-6 is
   <img src="docs/screenshots/11-galileo-insights-clusters.png" alt="Galileo Insights — failure clustering and anomaly detection" width="900" />
 </p>
 
-Galileo Protect acts as the runtime quality gate — the same `context_adherence` metric that flags failures in dev becomes the production guardrail. Insights clusters failures automatically, surfacing patterns across hundreds of traces without manual review.
+Galileo Agent Control acts as the runtime quality gate — the same `context_adherence` spirit that flags failures in dev becomes a production POST Control. Insights clusters failures automatically, surfacing patterns across hundreds of traces without manual review.
 
 ---
 
@@ -194,7 +194,7 @@ Engineer question
 | XL-1 | `xl1_process_dead.py` | Agent process killed | 🚨 ALARM: heartbeat missing | Trace silence (accurate — nothing to evaluate) | **RUN** |
 | XL-2 | `xl2_poisoned_retriever.py` | Wrong knowledge base | ✅ ALL GREEN | completeness 1.0 → 0.0 🚨, cites 1.0 → 0.0 🚨 | **TRUST** |
 | XL-3 | `xl3_langgraph_misroute.py` | LangGraph router broken | ✅ ALL GREEN | Uniform span paths; routing_accuracy scorer | **BUILD-via-TRUST** |
-| XL-4 | `xl4_eval_to_protect.py` | Hallucination-prone prompt | ✅ ALL GREEN | Protect pipeline operational; eval → guardrail | **TRUST** |
+| XL-4 | `xl4_eval_to_protect.py` | Hallucination-prone prompt | ✅ ALL GREEN | Agent Control POST gate; eval → Control | **TRUST** |
 | XL-5 | `xl5_slow_tool.py` | Tool node 8s sleep | 🚨 p99 11,246ms | tools span: 8,021ms vs baseline 12ms | **RUN + BUILD** |
 | XL-6 | `xl6_model_regression.py` | Silent quality regression | ✅ IMPROVED (↓ latency) | completeness 0.98 → 0.65, cites 1.0 → 0.88 | **TRUST** |
 
@@ -229,11 +229,19 @@ pip install -r requirements.txt
 ### 2. Configure credentials
 
 ```bash
-export OPENAI_API_KEY="sk-..."       # embeddings (text-embedding-3-small) + LLM (gpt-4o-mini)
+cp .env.example .env   # fill in locally — never commit secrets
+export OPENAI_API_KEY="sk-..."       # embeddings + LLM
 export GALILEO_API_KEY="..."          # app.galileo.ai → Settings → API Keys
+# Optional alias normalized by app.py: Galileo_API_Key
 ```
 
 **Create a Galileo project** called `rax-galileo-labs` with a log stream named `trinity-stack` before running — or edit the `PROJECT` and `LOG_STREAM` constants at the top of `app.py`.
+
+Offline fail-loud check (no API spend):
+
+```bash
+python app.py --preflight
+```
 
 ### 3. Run the baseline
 
@@ -313,7 +321,7 @@ The agent is a **LangGraph multi-node graph** with five nodes:
 | `retriever_node` | Dense retrieval from engineering corpus | OpenAI `text-embedding-3-small` + cosine vector index (cached on disk) |
 | `tools_node` | Tool dispatch | Real sandboxed Python execution (subprocess) + real semantic corpus search |
 | `responder_node` | Generates grounded answer | gpt-4o-mini with retrieval-grounded system prompt |
-| `protect_node` | Quality gate | Galileo Protect stage + Ruleset (runtime evaluation) |
+| `protect_node` | Quality gate | Galileo Agent Control POST (`evaluate_controls`) + LLM-judge fallback |
 
 **Metrics on every trace (Galileo server-side scorers):**
 - `context_adherence` — claims grounded in retrieved docs?
@@ -355,14 +363,14 @@ This is the most expensive class of AI failure in production: a healthy process,
 **Galileo:** Every trace has the **identical span path**. Normal routing has variety; a routing bug creates uniformity. routing_accuracy: 1.0 → 0.33 (only the 2 genuine infra queries landed correctly; 4/6 misrouted).  
 **The pattern:** Uniform span paths across diverse queries = routing bug. Fix: `intake_node` logic.
 
-### XL-4 — Eval → Protect Lifecycle (FM-53)
+### XL-4 — Eval → Agent Control Lifecycle (FM-53)
 **Inject:** Hallucination-prone system prompt (removes grounding instruction).  
 **Dev eval:** context_adherence flags multiple queries below 0.40–0.50. Dev decision: *DO NOT SHIP.*  
-**Prod without Protect:** Bad answers reach engineers. Fleet healthy. Zero alerts.  
-**Prod with Protect:** Galileo Protect runs on every response. Rule: `context_adherence < 0.5 → block`. The gate evaluates every response with the same metric that flagged the problem in dev.
+**Prod without Control:** Bad answers reach engineers. Fleet healthy. Zero alerts.  
+**Prod with Agent Control:** POST Control on stream `trinity-stack` evaluates every response. Deny when grounding fails (threshold spirit ≈ `ADHERENCE_FLOOR=0.5`). Classic Protect stage `trinity-protect` is deprecated (stages UI 404).
 
-**The differentiator:** The same `context_adherence` metric that flags a failure in dev *becomes* the production Protect threshold. One metric, three jobs (dev eval → prod gate → regression check), zero glue code.
-**XL-4b:** `drills/xl4b_out_of_scope.py` forces a real Protect block with out-of-scope queries; result: 4/6 blocked, context_adherence 0.00–0.10.
+**The differentiator:** The same grounding metric that flags a failure in dev *becomes* the production Control. One metric family, three jobs (dev eval → prod gate → regression check).  
+**XL-4b:** `drills/xl4b_out_of_scope.py` forces a real block with out-of-scope queries. **Console-manual:** create + attach a POST Control before expecting `protect_path=agent_control` denies; otherwise the documented LLM-judge fallback may enforce the floor when Control API is unavailable.
 
 ### XL-5 — Slow Tool Node (FM-54)
 **Inject:** 8-second sleep in the corpus-search tool.  
@@ -448,7 +456,9 @@ See `requirements.txt`.
 1. Create an account at [app.galileo.ai](https://app.galileo.ai)
 2. Create a project named `rax-galileo-labs` (or edit `PROJECT` in `app.py`)
 3. Create a log stream named `trinity-stack` (or edit `LOG_STREAM`)
-4. For XL-4 (Protect drill): create a Protect Stage in the Console before running — the app will attempt to create the Ruleset via API, but stage creation requires the Console
+4. For XL-4 / quality gate: open **Controls** → create a **POST** Control (grounding / deny) → **attach it to** log stream `trinity-stack`. Do **not** create classic Protect stage `trinity-protect` (Protect stages UI 404). This repo does not auto-create Controls in the live Console.
+5. Optional: set `AGENT_CONTROL_URL` (default `https://agent-control.galileo.ai`), `AGENT_CONTROL_AGENT_NAME=trinity-stack`. See `.env.example`.
+6. `python app.py --preflight` (offline). Opt-in live probe: `GALILEO_PREFLIGHT_LIVE=1 python app.py --preflight-live` (no Control create).
 
 ---
 
@@ -457,7 +467,7 @@ See `requirements.txt`.
 This repo is a companion to the article:  
 **[Six Ways to Break an AI Agent (My Dashboards Caught One)](https://pandeyaby.medium.com/six-ways-to-break-an-ai-agent-my-dashboards-caught-one-95d01627d57a)**
 
-The thesis, in one paragraph: the leverage in AI moved from prompting to loop design. A loop needs a gate — an objective verifier that runs without the author's optimism. Galileo *is* that gate: the eval metric that flags a problem in dev becomes the Protect rule in prod becomes the regression check that locks it permanently. Every failure you debug makes the loop harder to break. That's the self-repairing harness.
+The thesis, in one paragraph: the leverage in AI moved from prompting to loop design. A loop needs a gate — an objective verifier that runs without the author's optimism. Galileo *is* that gate: the eval metric that flags a problem in dev becomes the Agent Control rule in prod becomes the regression check that locks it permanently. Every failure you debug makes the loop harder to break. That's the self-repairing harness.
 
 ---
 

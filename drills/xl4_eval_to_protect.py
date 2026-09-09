@@ -1,17 +1,21 @@
 """
-drills/xl4_eval_to_protect.py — XL-4: Eval → Protect Guardrail (End-to-End)
+drills/xl4_eval_to_protect.py — XL-4: Eval → Agent Control Guardrail (End-to-End)
 =============================================================================
 Failure mode FM-53: Hallucination-prone prompt gets deployed to production.
-Eval catches it in dev. The SAME metric becomes a Protect rule in prod.
-No other platform closes this loop.
+Eval catches it in dev. The SAME grounding metric becomes a Console POST Control
+(Agent Control) in prod. Classic Protect stages (`trinity-protect`) are deprecated.
 
 This is the KILLER FEATURE demo: eval scores gate agent actions at runtime.
 
 Drill phases:
   PHASE A — DEV: Run with hallucination-prone prompt → evals flag it
-  PHASE B — PROD (no Protect): Same prompt live → bad answers reach engineers
-  PHASE C — PROD (with Protect): Protect rule blocks flagged responses
-  PHASE D — INSIGHT: Show the eval→guardrail lifecycle visually
+  PHASE B — PROD (no Control): Same prompt live → bad answers reach engineers
+  PHASE C — PROD (with Agent Control): POST Control / protect_node blocks flagged responses
+  PHASE D — INSIGHT: Show the eval→Control lifecycle visually
+
+Console-manual (required for protect_path=agent_control denies):
+  Controls → Create POST Control (deny on weak grounding) → attach to stream `trinity-stack`.
+  This drill does NOT create Controls in the live Console.
 
 Run: python drills/xl4_eval_to_protect.py
 """
@@ -21,10 +25,25 @@ import sys, os, json, time, pathlib, textwrap, datetime
 LAB_DIR = pathlib.Path(__file__).parent.parent
 sys.path.insert(0, str(LAB_DIR))
 
-os.environ.setdefault("GALILEO_API_KEY",
-    json.loads(open(pathlib.Path.home() / ".openclaw" / "openclaw.json").read())
-    ["mcp"]["servers"]["galileo"]["headers"]["Galileo-API-Key"]
-)
+def _inject_galileo_key() -> None:
+    if os.environ.get("GALILEO_API_KEY"):
+        return
+    alt = os.environ.get("Galileo_API_Key")
+    if alt:
+        os.environ["GALILEO_API_KEY"] = alt
+        return
+    try:
+        cfg = json.loads(
+            open(pathlib.Path.home() / ".openclaw" / "openclaw.json").read()
+        )
+        os.environ.setdefault(
+            "GALILEO_API_KEY",
+            cfg["mcp"]["servers"]["galileo"]["headers"]["Galileo-API-Key"],
+        )
+    except Exception:
+        pass
+
+_inject_galileo_key()
 
 from typing import TypedDict, Optional, List
 from langgraph.graph import StateGraph, END
@@ -33,11 +52,10 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from galileo import GalileoLogger
 from galileo.handlers.langchain import GalileoCallback
 from galileo.metric import LlmMetric
-from galileo_core.schemas.protect.payload import Payload
-from galileo_core.schemas.protect.response import Response, ExecutionStatus
 from app import (SupportState, intake_node, retriever_node, tools_node,
                  KNOWLEDGE_BASE_ORIGINAL, get_metrics, PROJECT, LOG_STREAM, MODEL,
-                 protect_node, _fleet_heartbeat)
+                 protect_node, _fleet_heartbeat, ADHERENCE_FLOOR, CONTROL_STEP,
+                 PROTECT_STAGE)
 
 # ── Hallucination-prone responder (simulates a bad system prompt deployment) ──
 # This is what happens when someone "optimizes" the prompt to sound more confident
@@ -85,15 +103,14 @@ def make_responder(system_prompt: str):
         return {"draft_answer": response.content}
     return responder_node_variant
 
-# ── Protect logic (REAL — no phrase matching) ──────────────────────────────────
-# Phase C uses the app's real protect_node, which calls Galileo invoke_protect()
-# against the configured stage + ruleset (context_adherence < threshold → block),
-# with a real-LLM-judge fallback if the Protect API is unreachable. The same metric
-# that the dev eval scores is the one enforced at runtime — that is the whole point.
-protect_node_with_rule = protect_node  # the genuine Protect node from app.py
+# ── Agent Control gate (REAL — no phrase matching) ─────────────────────────────
+# Phase C uses the app's real protect_node → Agent Control evaluate_controls(POST)
+# against Controls attached to the log stream, with LLM-judge fallback only if the
+# Control API is unavailable. Classic invoke_protect / trinity-protect is deprecated.
+protect_node_with_rule = protect_node  # the genuine gate from app.py
 
 def passthrough_protect(state: SupportState) -> SupportState:
-    """No Protect — all responses pass through (Phase B: guardrail disabled)."""
+    """No Control — all responses pass through (Phase B: guardrail disabled)."""
     return {"final_answer": state.get("draft_answer", ""), "protect_status": "skipped"}
 
 # ── Graph factory ─────────────────────────────────────────────────────────────
@@ -117,14 +134,16 @@ def build_variant_graph(system_prompt: str, protect_fn=passthrough_protect):
     return wf.compile()
 
 def run_q(graph, query: str, tag: str, label: str = "") -> dict:
+    from app import ensure_agent_control
     logger  = GalileoLogger(project=PROJECT, log_stream=LOG_STREAM)
     cb = GalileoCallback(galileo_logger=logger, start_new_trace=True,
                          flush_on_chain_end=True)
+    ensure_agent_control(logger)
     t0 = time.time()
     result = graph.invoke(
         {"query": query, "intent": None, "retrieved_docs": [], "doc_ids": [],
          "tool_result": "", "draft_answer": "", "final_answer": "",
-         "protect_status": "", "context_score": None},
+         "protect_status": "", "context_score": None, "protect_path": None},
         config={"callbacks": [cb], "metadata": {"tag": tag, "label": label}},
     )
     latency_ms = int((time.time() - t0) * 1000)
@@ -148,15 +167,19 @@ def print_result(q, r, phase):
     protect_icon = {"triggered": "🛑", "not_triggered": "✅", "skipped": "⚪"}.get(
         r.get("protect_status",""), "❓")
     answer = (r.get("final_answer") or r.get("draft_answer",""))[:200]
+    path = r.get("protect_path") or "-"
     print(f"  Q: {q[:60]}")
     print(f"  A: {answer}")
-    print(f"  Protect ({phase}): {protect_icon} {r.get('protect_status','?')}")
+    print(f"  Gate ({phase}): {protect_icon} {r.get('protect_status','?')}  path={path}")
     print()
 
 def run_drill():
-    print("\n🔬 XL-4 DRILL: Eval → Protect Guardrail (End-to-End)")
+    print("\n🔬 XL-4 DRILL: Eval → Agent Control Guardrail (End-to-End)")
     print("   'The eval score that caught it in dev blocks it in prod.'")
-    print("   Failure mode FM-53 — the feature no other platform has.")
+    print("   Failure mode FM-53 — Agent Control POST (classic Protect stages deprecated).")
+    print(f"   Console-manual: attach POST Control to `{LOG_STREAM}` "
+          f"(step `{CONTROL_STEP}`; floor spirit {ADHERENCE_FLOOR}).")
+    print(f"   Do not create classic stage `{PROTECT_STAGE}`.")
 
     # ── PHASE A: Dev evals catch the bad prompt ──
     banner("PHASE A — DEV: Hallucination-prone prompt, evals running")
@@ -184,38 +207,41 @@ def run_drill():
     print("DEV DECISION: context_adherence < 0.5 on 40%+ of queries → DO NOT SHIP.")
     print("But what if it slips through to prod?")
 
-    # ── PHASE B: Bad prompt in prod WITHOUT Protect ──
-    banner("PHASE B — PROD (no Protect): Bad prompt deployed, engineers see bad answers")
-    print("Scenario: The hallucination-prone prompt got deployed. No Protect rule active.")
+    # ── PHASE B: Bad prompt in prod WITHOUT Control ──
+    banner("PHASE B — PROD (no Control): Bad prompt deployed, engineers see bad answers")
+    print("Scenario: The hallucination-prone prompt got deployed. No Agent Control attached.")
     print("Engineers are receiving fabricated flags, commands, and numbers.\n")
 
     graph_bad_prod = build_variant_graph(HALLUCINATION_SYSTEM_PROMPT, passthrough_protect)
     phase_b_results = []
     for q in DRILL_QUERIES[:3]:  # just 3 queries to save cost
         r = run_q(graph_bad_prod, q, tag="xl4-prod-no-protect", label="bad-prompt-prod")
-        print_result(q, r, "prod-no-protect")
+        print_result(q, r, "prod-no-control")
         phase_b_results.append(r)
 
-    print("Protect status for all Phase B queries: ⚪ SKIPPED (no rule active)")
+    print("Gate status for all Phase B queries: ⚪ SKIPPED (no Control active)")
     print("Engineers receive whatever the model outputs — good or hallucinated.")
     print()
-    print("Without Protect: bad answers reach engineers. Fleet: ✅ healthy. Zero alerts.")
+    print("Without Control: bad answers reach engineers. Fleet: ✅ healthy. Zero alerts.")
 
-    # ── PHASE C: Same bad prompt, Protect rule active ──
-    banner("PHASE C — PROD (with Protect): Same prompt, Protect blocks bad responses")
-    print("Scenario: Protect rule deployed — 'block if context_adherence < 0.5'")
-    print("Same bad prompt. Same queries. Now watch what Protect does.\n")
+    # ── PHASE C: Same bad prompt, Agent Control active ──
+    banner("PHASE C — PROD (with Agent Control): Same prompt, POST Control blocks bad responses")
+    print("Scenario: POST Control attached — deny when grounding fails "
+          f"(floor spirit {ADHERENCE_FLOOR}).")
+    print("Same bad prompt. Same queries. Now watch what the gate does.\n")
+    print("NOTE: Create+attach the Control in Console first; this drill never creates it.\n")
 
     graph_protected = build_variant_graph(HALLUCINATION_SYSTEM_PROMPT, protect_node_with_rule)
     phase_c_results = []
     for q in DRILL_QUERIES:
         r = run_q(graph_protected, q, tag="xl4-prod-with-protect", label="bad-prompt-protected")
-        print_result(q, r, "prod-with-protect")
+        print_result(q, r, "prod-with-control")
         phase_c_results.append(r)
 
     triggered = sum(1 for r in phase_c_results if r.get("protect_status") == "triggered")
     not_triggered = sum(1 for r in phase_c_results if r.get("protect_status") == "not_triggered")
-    print(f"Protect results: 🛑 {triggered} blocked  |  ✅ {not_triggered} passed")
+    paths = {r.get("protect_path") for r in phase_c_results}
+    print(f"Gate results: 🛑 {triggered} blocked  |  ✅ {not_triggered} passed  |  paths={paths}")
     print()
     print("What engineers see when Protect triggers:")
     blocked = next((r.get("final_answer","") for r in phase_c_results
@@ -227,38 +253,33 @@ def run_drill():
     print("✅ Fleet still healthy (latency adds ~15ms for Protect evaluation)")
 
     # ── PHASE D: The Eval → Protect Lifecycle ──
-    banner("PHASE D — THE LIFECYCLE: How eval becomes guardrail")
-    print(textwrap.dedent("""
+    banner("PHASE D — THE LIFECYCLE: How eval becomes Agent Control")
+    print(textwrap.dedent(f"""
     ╔══════════════════════════════════════════════════════════════╗
-    ║     GALILEO EVAL → GUARDRAIL LIFECYCLE                       ║
+    ║     GALILEO EVAL → AGENT CONTROL LIFECYCLE                   ║
     ╠══════════════════════════════════════════════════════════════╣
     ║                                                              ║
     ║  1. OFFLINE EVAL (dev)                                       ║
     ║     Run experiments on test set                              ║
-    ║     → Galileo scores context_adherence on 100% of traces     ║
-    ║     → Luna-2 judges: ~96% cheaper than GPT-4 as judge        ║
-    ║     → Insight: "40% of responses score < 0.5"               ║
+    ║     → Galileo scores context_adherence on traces             ║
+    ║     → Insight: responses score < {ADHERENCE_FLOOR}                         ║
     ║                                                              ║
-    ║  2. THRESHOLD BECOMES RULE (one click)                       ║
-    ║     Console → Protect → New Stage                            ║
-    ║     Rule: context_adherence < 0.5 → block                    ║
-    ║     → Same metric, now enforced at inference time            ║
+    ║  2. THRESHOLD BECOMES CONTROL (Console — manual)             ║
+    ║     Console → Controls → Create POST Control                 ║
+    ║     Attach to log stream `{LOG_STREAM}`                    ║
+    ║     Deny when grounding fails (floor spirit {ADHERENCE_FLOOR})             ║
+    ║     → Classic Protect stage `{PROTECT_STAGE}` is DEPRECATED ║
     ║                                                              ║
-    ║  3. RUNTIME PROTECTION (prod)                                ║
-    ║     invoke_protect(payload) → Response.status                ║
-    ║     triggered    → return fallback message + escalate        ║
-    ║     not_triggered → return answer to engineer                ║
+    ║  3. RUNTIME GATE (prod)                                      ║
+    ║     agent_control.evaluate_controls(stage='post')            ║
+    ║     ControlViolationError → block + escalate                 ║
+    ║     allow → return answer to engineer                        ║
+    ║     Control API unavailable → LLM-judge fallback (documented)║
     ║                                                              ║
     ║  4. CONTINUOUS IMPROVEMENT                                   ║
     ║     Every blocked response → Galileo logs it                 ║
     ║     → Insights clusters patterns                             ║
-    ║     → Update prompt → re-run eval → Protect threshold tightens║
-    ║                                                              ║
-    ║  ⭐ NO OTHER PLATFORM CLOSES THIS LOOP.                      ║
-    ║     LangSmith has evals. LangSmith doesn't have Protect.     ║
-    ║     Datadog has guardrails. Datadog can't score context       ║
-    ║     adherence against YOUR knowledge base.                   ║
-    ║     Galileo does both, and they're the same metric.          ║
+    ║     → Update prompt → re-run eval → tighten Control          ║
     ╚══════════════════════════════════════════════════════════════╝
     """))
 
@@ -268,28 +289,24 @@ def run_drill():
     Failure mode:  FM-53 (XL-4) — Hallucination-prone prompt in production
     
     Phase A (dev eval):
-      context_adherence scores < 0.5 on multiple queries
+      context_adherence scores < {ADHERENCE_FLOOR} on multiple queries
       → eval flags: DO NOT SHIP this prompt
     
-    Phase B (prod, no Protect):
+    Phase B (prod, no Control):
       Bad prompt deployed anyway (happens!)
       Fleet: ✅ healthy  |  Zero alerts  |  Bad answers reach engineers
     
-    Phase C (prod + Protect rule):
-      Protect rule: block if context_adherence < 0.5
+    Phase C (prod + Agent Control):
+      POST Control / protect_node (step `{CONTROL_STEP}`)
       → {triggered}/{len(DRILL_QUERIES)} responses BLOCKED before reaching engineer
-      → Human escalation triggered automatically
-      → Good responses still pass through (no false positives)
+      → paths seen: {paths}
+      → Good responses still pass through when Control allows
     
     THE DIFFERENTIATOR:
-      Eval in dev  →  one click  →  Protect rule in prod
-      Same metric. Same threshold. Closed loop. No glue code.
+      Eval in dev  →  Console POST Control  →  runtime deny in prod
+      Same grounding spirit. Closed loop.
       
-      Luna-2 makes 100%-traffic evaluation affordable (not just sampling).
-      At Galileo's claimed cost: 1M evaluations ≈ cost of 20K GPT-4 calls.
-      
-    Runbook: runbooks/RB-140-hallucination-protect-rule.md
-    Console: https://app.galileo.ai → {PROJECT} → {LOG_STREAM}
+    Console: https://app.galileo.ai → {PROJECT} → {LOG_STREAM} → Controls
              Compare tags: xl4-dev-eval / xl4-prod-no-protect / xl4-prod-with-protect
     """))
 

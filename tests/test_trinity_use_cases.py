@@ -42,10 +42,10 @@ def test_protect_as_loop_checker_non_converge_alert(runtime):
     def protect_checker(s: State) -> float:
         # Simulate live Protect: triggered + low score
         s.data["protect_status"] = "triggered"
-        s.data["protect_path"] = "invoke_protect"
+        s.data["protect_path"] = "agent_control"
         s.data["protect_score"] = 0.2
         s.metrics["protect_status"] = "triggered"
-        s.metrics["protect_path"] = "invoke_protect"
+        s.metrics["protect_path"] = "agent_control"
         s.metrics["protect_score"] = 0.2
         return 0.2
 

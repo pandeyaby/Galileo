@@ -173,8 +173,8 @@ def evaluate_protect_score(s: State, *, trinity_mod=None) -> dict:
     """
     Live Protect evaluation → numeric score for LoopNode checker.
 
-    Uses ``app.protect_node`` (invoke_protect + LLM-judge fallback). Returns
-    score in [0, 1] where ≥ ADHERENCE_FLOOR means Protect would pass.
+    Uses ``app.protect_node`` (Agent Control POST + LLM-judge fallback). Returns
+    score in [0, 1] where ≥ ADHERENCE_FLOOR means the gate would pass.
     """
     import app as trinity
 
@@ -191,7 +191,7 @@ def evaluate_protect_score(s: State, *, trinity_mod=None) -> dict:
     path = str(out.get("protect_path") or "")
     raw_score = out.get("context_score")
     if raw_score is None:
-        # invoke_protect path may omit numeric score — map status honestly
+        # agent_control path may omit numeric score — map status honestly
         score = 0.9 if status == "not_triggered" else max(0.0, floor - 0.2)
     else:
         score = float(raw_score)

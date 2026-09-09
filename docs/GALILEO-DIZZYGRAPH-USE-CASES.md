@@ -5,7 +5,7 @@ Status below matches the control-plane `/api/trinity/use-cases` list (v0.4+).
 
 | Use case | DizzyGraph layer | Galileo surface | Fleet signal | Status |
 |----------|------------------|-----------------|--------------|--------|
-| **Protect as LoopNode checker** | `LoopNode` maker/checker | Live `app.protect_node` → `invoke_protect` / LLM-judge | `loop_non_converge` alert (+ Protect score/path) | **shipped** |
+| **Protect as LoopNode checker** | `LoopNode` maker/checker | Live `app.protect_node` → Agent Control POST / LLM-judge | `loop_non_converge` alert (+ Protect score/path) | **shipped** |
 | **XL drill fan-out** | `Supervisor` / XL graphs | One project, many traces | Parent aggregates child Protect status | **shipped** |
 | **Silent regression meta-loop** | `MetaLoopExecutor` | Scorer trends across meta iters | `meta_protect_score` / `meta_quality_delta` | **shipped** (API + UI) |
 | **HITL after Protect trigger** | `interrupt()` / resume | Protect `triggered` → human gate | `hitl_interrupt` + aging alert | **shipped** |

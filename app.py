@@ -7,13 +7,14 @@ agent Meta / OpenAI / NVIDIA-class orgs run internally). It answers questions ab
 distributed training, inference serving, and GPU/cluster infrastructure, grounded in
 a real engineering knowledge corpus. It routes by topic, retrieves with real dense
 embeddings, runs real tools (sandboxed code execution + semantic corpus search),
-generates an answer, and gates it through a real Galileo Protect stage.
+generates an answer, and gates it through Galileo Agent Control (PRE/POST Controls).
 
 PRODUCTION-GRADE — NO MOCKS:
   - Retrieval:   real OpenAI embeddings + cosine vector index (NOT keyword overlap)
   - Tools:       real sandboxed Python execution + real semantic search (NOT dict lookups)
-  - Guardrails:  real Galileo Protect via invoke_protect + Ruleset/Rule/OverrideAction
-                 (real-LLM-judge fallback only if the Protect API is unreachable)
+  - Guardrails:  Galileo Agent Control (POST Controls API via agent-control-sdk)
+                 — ControlViolationError on deny; LLM-judge fallback only if Control API
+                 unavailable (same ADHERENCE_FLOOR / context_adherence spirit)
   - Telemetry:   real measured process metrics via psutil + real measured latency
                  (NOT a hand-written heartbeat with fabricated numbers)
   - Corpus:      real ML-infra engineering knowledge (NOT marketing copy)
@@ -21,14 +22,16 @@ PRODUCTION-GRADE — NO MOCKS:
 Architecture:
   [intake] → (route) → retriever → tools → responder → protect
                                                           ↓
-                                              Galileo Protect stage (XL-4)
+                                    Agent Control POST gate (XL-4)
 
 Three layers:
   BUILD:  LangGraph (this file)
   RUN:    fleet/monitor.py + psutil telemetry (ClawTrace/OTel-equivalent — see _fleet_heartbeat)
-  TRUST:  Galileo (traces, context adherence, completeness, custom judges, Protect)
+  TRUST:  Galileo (traces, context adherence, completeness, custom judges, Agent Control)
 
 Usage:
+  python app.py --preflight        # offline env / corpus / Controls checklist (no API spend)
+  python app.py --preflight-live   # offline + optional live Control probe (flagged)
   python app.py "How do I debug a CUDA out-of-memory error during training?"
   python app.py --batch            # real engineering baseline (10 queries)
   python app.py --poison-corpus    # XL-2: swap to an off-domain index (drill)
@@ -36,6 +39,8 @@ Usage:
 """
 
 import os, sys, json, datetime, time, pathlib, hashlib, subprocess, tempfile, textwrap
+import asyncio
+import threading
 
 # ── API key injection (read from the gateway's Galileo MCP config; never echoed) ─
 def _load_key(name: str) -> str:
@@ -47,7 +52,185 @@ def _load_key(name: str) -> str:
     except Exception:
         return os.environ.get(name, "")
 
+def _normalize_galileo_api_key() -> None:
+    """Map Galileo_API_Key / OpenClaw header → GALILEO_API_KEY. Never prints values."""
+    if os.environ.get("GALILEO_API_KEY"):
+        return
+    alt = os.environ.get("Galileo_API_Key") or _load_key("GALILEO_API_KEY")
+    if alt:
+        os.environ["GALILEO_API_KEY"] = alt
+
+_normalize_galileo_api_key()
 os.environ.setdefault("GALILEO_API_KEY", _load_key("GALILEO_API_KEY"))
+
+def _load_dotenv(path: pathlib.Path | None = None) -> None:
+    """Load KEY=VALUE from a local .env into os.environ (setdefault). Never prints values."""
+    env_path = path or (pathlib.Path(__file__).parent / ".env")
+    if not env_path.is_file():
+        return
+    try:
+        for raw in env_path.read_text().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip("'").strip('"')
+            if key:
+                os.environ.setdefault(key, val)
+    except OSError:
+        pass
+    _normalize_galileo_api_key()
+
+# ── Constants (preflight-safe; no heavy SDK imports) ──────────────────────────
+PROJECT          = "rax-galileo-labs"
+LOG_STREAM       = "trinity-stack"
+MODEL            = "gpt-4o-mini"
+EMBED_MODEL      = "text-embedding-3-small"
+# Deprecated classic Protect stage name — Console Protect stages UI 404s (2026-09).
+# Prefer Agent Control PRE/POST Controls bound to the log stream.
+PROTECT_STAGE    = "trinity-protect"  # DEPRECATED alias; do not create classic stages
+AGENT_NAME       = os.environ.get("AGENT_CONTROL_AGENT_NAME", "trinity-stack")
+CONTROL_STEP     = "protect"          # Agent Control step name for the POST gate
+ADHERENCE_FLOOR  = 0.5                # LLM-judge fallback threshold (same spirit as Control)
+TOP_K            = 3
+
+def _agent_name() -> str:
+    return os.environ.get("AGENT_CONTROL_AGENT_NAME", "trinity-stack")
+
+KB_FILE          = pathlib.Path(__file__).parent / "knowledge_base.json"
+KB_POISON_FILE   = pathlib.Path(__file__).parent / "knowledge_base_poisoned.json"
+KB_CANONICAL     = pathlib.Path(__file__).parent / "corpus" / "ml_platform_kb.json"
+INDEX_CACHE_DIR  = pathlib.Path(__file__).parent / ".vector_cache"
+DEFAULT_AGENT_CONTROL_URL = "https://agent-control.galileo.ai"
+
+BLOCKED_MESSAGE = (
+    "[BLOCKED by Galileo Agent Control] This answer failed the grounding check "
+    "(POST Control deny / context_adherence below threshold) and was withheld. "
+    "The query has been routed to a human platform engineer."
+)
+
+# Corpus restore candidates (XL-2 recovery / preflight).
+_KB_RESTORE_CANDIDATES = (
+    KB_FILE,
+    KB_FILE.with_suffix(".json.bak"),
+    KB_CANONICAL,
+)
+
+def _keys_present() -> dict:
+    """Boolean key presence only — never return secret values."""
+    _normalize_galileo_api_key()
+    return {
+        "OPENAI_API_KEY": bool(os.environ.get("OPENAI_API_KEY")),
+        "GALILEO_API_KEY": bool(os.environ.get("GALILEO_API_KEY")),
+    }
+
+def _agent_control_url() -> str:
+    """Resolve Agent Control server URL (docs: agent-control.<env>.galileo.ai)."""
+    explicit = (os.environ.get("AGENT_CONTROL_URL") or "").strip().rstrip("/")
+    if explicit:
+        return explicit
+    api = (os.environ.get("GALILEO_API_URL") or "https://api.galileo.ai").strip().rstrip("/")
+    if "://api." in api:
+        return api.replace("://api.", "://agent-control.", 1)
+    return DEFAULT_AGENT_CONTROL_URL
+
+def run_preflight(*, live: bool = False) -> int:
+    """Offline fail-loud checks. No paid API calls unless live probe is greenlit."""
+    _load_dotenv()
+    _normalize_galileo_api_key()
+    failures: list[str] = []
+    keys = _keys_present()
+
+    print("Trinity Stack preflight (offline — no API spend)")
+    print(f"  Project/stream: {PROJECT} / {LOG_STREAM}")
+    print(f"  Agent Control agent/step: {AGENT_NAME} / {CONTROL_STEP} (POST gate)")
+    print(f"  Deprecated classic stage name (do not use): {PROTECT_STAGE}")
+    print(f"  OPENAI_API_KEY present:  {'YES' if keys['OPENAI_API_KEY'] else 'NO'}")
+    print(f"  GALILEO_API_KEY present: {'YES' if keys['GALILEO_API_KEY'] else 'NO'}")
+    print("    (env, .env, Galileo_API_Key alias, or ~/.openclaw galileo headers)")
+
+    if not keys["OPENAI_API_KEY"]:
+        failures.append("OPENAI_API_KEY missing — copy .env.example → .env (never commit secrets)")
+    if not keys["GALILEO_API_KEY"]:
+        failures.append("GALILEO_API_KEY missing — set env/.env or Galileo_API_Key / OpenClaw headers")
+
+    kb_ok = any(p.is_file() for p in _KB_RESTORE_CANDIDATES)
+    print(f"  knowledge_base / restore path: {'OK' if kb_ok else 'MISSING'}")
+    if not kb_ok:
+        failures.append("knowledge_base.json (or bak/canonical corpus) missing")
+
+    print("  Agent Control Console checklist (manual — this PR does not create Controls):")
+    print(f"    1. Open project `{PROJECT}` → log stream `{LOG_STREAM}` → Controls tab")
+    print("    2. Create a POST Control (e.g. grounding / context_adherence-style deny)")
+    print(f"       with threshold spirit ≈ ADHERENCE_FLOOR={ADHERENCE_FLOOR}")
+    print(f"    3. Attach that Control to stream `{LOG_STREAM}`")
+    print(f"    4. Runtime uses agent-control-sdk evaluate_controls stage=post")
+    print(f"       (AGENT_CONTROL_URL default {_agent_control_url()})")
+    print("    Classic Protect stages UI is deprecated/404 — do not create trinity-protect.")
+
+    if live:
+        allow = os.environ.get("GALILEO_PREFLIGHT_LIVE", "").strip() == "1"
+        if not allow:
+            print("  Live check: SKIPPED")
+            print("    Set GALILEO_PREFLIGHT_LIVE=1 with --preflight-live for a free metadata probe.")
+            print("    No invoke_protect; no mock success; no Control creation.")
+        elif not keys["GALILEO_API_KEY"]:
+            failures.append("live probe requested but GALILEO_API_KEY missing")
+            print("  Live check: FAIL (no key)")
+        else:
+            print("  Live check: attempting Agent Control health (no Control create)…")
+            try:
+                code = _live_agent_control_probe()
+                if code != 0:
+                    failures.append("Agent Control live probe failed (see output above)")
+            except Exception as exc:
+                failures.append(f"Agent Control live probe error: {type(exc).__name__}")
+                print(f"  Live check: FAIL ({type(exc).__name__})")
+
+    if failures:
+        print("PREFLIGHT FAILED")
+        for f in failures:
+            print(f"  - {f}")
+        print("Fix the items above before Quick Start / live drills. See .env.example and README.")
+        return 1
+    print("PREFLIGHT OK")
+    return 0
+
+def _live_agent_control_probe() -> int:
+    """Opt-in network probe: health/init against Agent Control. No Control creation."""
+    import agent_control
+    from galileo import GalileoLogger
+
+    url = _agent_control_url()
+    api_key = os.environ["GALILEO_API_KEY"]
+    header = os.environ.get("AGENT_CONTROL_API_KEY_HEADER", "Galileo-API-Key")
+    logger = GalileoLogger(project=PROJECT, log_stream=LOG_STREAM)
+    if not getattr(logger, "log_stream_id", None):
+        print("  Live check: FAIL (could not resolve log_stream_id)")
+        return 1
+    os.environ.setdefault("GALILEO_LOG_STREAM_ID", str(logger.log_stream_id))
+    if getattr(logger, "project_id", None):
+        os.environ.setdefault("GALILEO_PROJECT_ID", str(logger.project_id))
+    agent_control.init(
+        agent_name=_agent_name(),
+        agent_description="Trinity Stack Agent Control probe",
+        server_url=url,
+        api_key=api_key,
+        api_key_header=header,
+        observability_enabled=False,
+        policy_refresh_interval_seconds=0,
+        target_type="log_stream",
+        target_id=str(logger.log_stream_id),
+    )
+    n = len(getattr(agent_control, "get_server_controls", lambda: [])() or [])
+    print(f"  Live check: OK (log_stream_id resolved; controls attached: {n})")
+    print("    If controls=0, create+attach a POST Control in Console before XL-4 expects blocks.")
+    return 0
+
+# Cheap path: --preflight / --preflight-live before LangGraph / Galileo / OpenAI imports.
+if __name__ == "__main__" and ("--preflight" in sys.argv[1:] or "--preflight-live" in sys.argv[1:]):
+    sys.exit(run_preflight(live="--preflight-live" in sys.argv[1:]))
 
 # ── Imports ───────────────────────────────────────────────────────────────────
 from typing import TypedDict, Optional, List, Dict
@@ -59,14 +242,7 @@ from galileo import GalileoLogger
 from galileo.handlers.langchain import GalileoCallback
 from galileo.metric import LlmMetric
 
-# ── Galileo 2.3.0 Agent Control bridge (new observability path) ───────────────
-# setup_agent_control_bridge() connects the GalileoLogger to the agent-control-sdk
-# so that control evaluation events flow into Galileo traces automatically.
-# This is the migration path FROM invoke_protect TOWARD full Agent Control.
-# For runtime guardrail enforcement (blocking), we still use invoke_protect in
-# this lab because a dedicated agent-control server is not provisioned here.
-# When an agent-control server IS available (see RB-140 §Fix - Current path),
-# replace invoke_protect with @agent_control.control() + ControlViolationError.
+# Agent Control observability bridge (control evaluation events → Galileo spans).
 try:
     from galileo import setup_agent_control_bridge, GalileoAgentControlBridge
     _AGENT_CONTROL_BRIDGE_AVAILABLE = True
@@ -74,36 +250,20 @@ except ImportError:
     _AGENT_CONTROL_BRIDGE_AVAILABLE = False
     GalileoAgentControlBridge = None  # type: ignore
 
-# Real Galileo Protect surface (deprecated in 2.3.0, still functional).
-# Migration target: @agent_control.control() + ControlViolationError (see RB-140).
+# Agent Control enforcement (primary protect path). Classic invoke_protect removed.
 try:
-    from galileo import invoke_protect
-    from galileo_core.schemas.protect.payload import Payload
-    from galileo_core.schemas.protect.ruleset import Ruleset
-    from galileo_core.schemas.protect.rule import Rule, RuleOperator
-    from galileo_core.schemas.protect.action import OverrideAction
-    _PROTECT_AVAILABLE = True
-except Exception:  # SDK older than Protect support
-    _PROTECT_AVAILABLE = False
+    import agent_control
+    from agent_control import ControlViolationError, ControlSteerError
+    _AGENT_CONTROL_SDK_AVAILABLE = True
+except ImportError:
+    agent_control = None  # type: ignore
+    ControlViolationError = type("ControlViolationError", (Exception,), {})  # type: ignore
+    ControlSteerError = type("ControlSteerError", (Exception,), {})  # type: ignore
+    _AGENT_CONTROL_SDK_AVAILABLE = False
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-PROJECT          = "rax-galileo-labs"
-LOG_STREAM       = "trinity-stack"
-MODEL            = "gpt-4o-mini"
-EMBED_MODEL      = "text-embedding-3-small"
-PROTECT_STAGE    = "trinity-protect"
-ADHERENCE_FLOOR  = 0.5            # Protect rule threshold (block below this)
-TOP_K            = 3
-KB_FILE          = pathlib.Path(__file__).parent / "knowledge_base.json"
-KB_POISON_FILE   = pathlib.Path(__file__).parent / "knowledge_base_poisoned.json"
-KB_CANONICAL     = pathlib.Path(__file__).parent / "corpus" / "ml_platform_kb.json"
-INDEX_CACHE_DIR  = pathlib.Path(__file__).parent / ".vector_cache"
-
-BLOCKED_MESSAGE = (
-    "[BLOCKED by Galileo Protect] This answer failed the grounding check "
-    "(context_adherence below threshold) and was withheld. The query has been "
-    "routed to a human platform engineer."
-)
+_ac_init_lock = threading.Lock()
+_ac_initialized = False
+_ac_init_error: str | None = None
 
 # ── Seed engineering docs (canonical IDs tr1–in3). Full lab-scale corpus is
 # generated by corpus/generate_ml_corpus.py → knowledge_base.json (~1000 chunks).
@@ -263,7 +423,7 @@ class SupportState(TypedDict):
     final_answer:     Optional[str]
     protect_status:   Optional[str]    # triggered | not_triggered | skipped
     context_score:    Optional[float]  # real retrieval/judge score
-    protect_path:     Optional[str]    # invoke_protect | llm_judge_fallback (2026-06-16)
+    protect_path:     Optional[str]    # agent_control | llm_judge_fallback
 
 # ── REAL tools (real execution — no hardcoded dicts, no fabricated IDs) ─────────
 def tool_run_python(code: str, timeout_s: int = 8) -> str:
@@ -384,21 +544,165 @@ def responder_node(state: SupportState) -> SupportState:
     ])
     return {"draft_answer": response.content}
 
-# ── REAL Galileo Protect node ──────────────────────────────────────────────────
-def _protect_ruleset():
-    """A real Protect ruleset: block when context_adherence falls below the floor."""
-    return Ruleset(
-        rules=[Rule(metric="context_adherence", operator=RuleOperator.lt,
-                    target_value=ADHERENCE_FLOOR)],
-        action=OverrideAction(choices=[BLOCKED_MESSAGE]),
-        description="Block answers not grounded in the retrieved engineering corpus.",
-    )
+# ── Galileo Agent Control gate (POST Controls API) ─────────────────────────────
+def ensure_agent_control(logger: GalileoLogger | None = None) -> bool:
+    """Initialize agent-control-sdk against Galileo-hosted Agent Control.
+
+    Uses verified APIs from agent-control-sdk + Galileo docs:
+      agent_control.init(..., target_type='log_stream', target_id=log_stream_id)
+    Controls are created/attached manually in Console (this code does not bootstrap
+    Controls unless GALILEO_BOOTSTRAP_CONTROL=1 — not implemented; fail-loud docs only).
+    """
+    global _ac_initialized, _ac_init_error
+    with _ac_init_lock:
+        if _ac_initialized:
+            return _ac_init_error is None
+        if not _AGENT_CONTROL_SDK_AVAILABLE:
+            _ac_init_error = "agent-control-sdk not installed"
+            return False
+        if not os.environ.get("GALILEO_API_KEY"):
+            _ac_init_error = "GALILEO_API_KEY missing"
+            return False
+        try:
+            log_stream_id = None
+            project_id = None
+            if logger is not None:
+                log_stream_id = getattr(logger, "log_stream_id", None)
+                project_id = getattr(logger, "project_id", None)
+            log_stream_id = log_stream_id or os.environ.get("GALILEO_LOG_STREAM_ID")
+            if not log_stream_id and logger is None:
+                # Resolve IDs via a short-lived logger (network).
+                probe = GalileoLogger(project=PROJECT, log_stream=LOG_STREAM)
+                log_stream_id = getattr(probe, "log_stream_id", None)
+                project_id = getattr(probe, "project_id", None)
+            if not log_stream_id:
+                _ac_init_error = "log_stream_id unresolved — init GalileoLogger first"
+                return False
+            os.environ.setdefault("GALILEO_LOG_STREAM_ID", str(log_stream_id))
+            if project_id:
+                os.environ.setdefault("GALILEO_PROJECT_ID", str(project_id))
+
+            url = _agent_control_url()
+            api_key = os.environ["GALILEO_API_KEY"]
+            header = os.environ.get("AGENT_CONTROL_API_KEY_HEADER", "Galileo-API-Key")
+            # Runtime token header per Galileo Agent Control init guide (SDK ≥8.5).
+            rt_header = os.environ.get(
+                "AGENT_CONTROL_RUNTIME_TOKEN_HEADER", "X-Agent-Control-Runtime-Token"
+            )
+            agent_control.init(
+                agent_name=_agent_name(),
+                agent_description="Trinity Stack ML-platform engineering assistant",
+                agent_version="0.5.0",
+                server_url=url,
+                api_key=api_key,
+                api_key_header=header,
+                runtime_token_header=rt_header,
+                observability_enabled=True,
+                observability_sink_name="registered",
+                policy_refresh_interval_seconds=int(
+                    os.environ.get("AGENT_CONTROL_REFRESH_SECONDS", "60")
+                ),
+                target_type=os.environ.get("AGENT_CONTROL_TARGET_TYPE", "log_stream"),
+                target_id=str(log_stream_id),
+            )
+            _ac_initialized = True
+            _ac_init_error = None
+            return True
+        except Exception as exc:
+            _ac_initialized = True  # don't retry every node call
+            _ac_init_error = f"{type(exc).__name__}: {exc}"
+            return False
+
+def _run_coro_sync(coro):
+    """Run an async coroutine from sync LangGraph nodes without nested-loop crashes."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    # Already in an event loop (rare for this lab) — use a fresh thread.
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+def _action_is_deny(action) -> bool:
+    if action is None:
+        return True
+    raw = getattr(action, "value", action)
+    return str(raw).lower() in {"deny", "controlaction.deny", "actiondecision.deny"}
+
+def evaluate_post_control(
+    *,
+    query: str,
+    draft: str,
+    context: str = "",
+    agent_name: str | None = None,
+) -> str:
+    """POST-stage Agent Control evaluation. Raises ControlViolationError on deny.
+
+    Mirrors @agent_control.control() post-check using evaluate_controls (verified API).
+    """
+    if not _AGENT_CONTROL_SDK_AVAILABLE:
+        raise RuntimeError("agent-control-sdk unavailable")
+    if _ac_init_error:
+        raise RuntimeError(f"Agent Control init failed: {_ac_init_error}")
+    if not _ac_initialized and not ensure_agent_control():
+        raise RuntimeError(f"Agent Control not initialized: {_ac_init_error}")
+
+    step_context = {"retrieved_docs": context} if context else None
+
+    async def _eval():
+        return await agent_control.evaluate_controls(
+            CONTROL_STEP,
+            input=query,
+            output=draft,
+            context=step_context,
+            step_type="llm",
+            stage="post",
+            agent_name=agent_name or _agent_name(),
+        )
+
+    result = _run_coro_sync(_eval())
+
+    # Server-side evaluator failures must not be treated as allow.
+    errors = getattr(result, "errors", None) or []
+    if errors:
+        raise RuntimeError(f"Agent Control evaluation errors: {errors!r}")
+
+    matches = getattr(result, "matches", None) or []
+    is_safe = bool(getattr(result, "is_safe", True))
+    if not is_safe:
+        for match in matches:
+            action = getattr(match, "action", None)
+            if isinstance(match, dict):
+                action = match.get("action", "deny")
+                name = match.get("control_name", "unknown")
+                cid = match.get("control_id")
+                msg = (match.get("result") or {}).get("message", "Control triggered")
+            else:
+                name = getattr(match, "control_name", "unknown")
+                cid = getattr(match, "control_id", None)
+                res = getattr(match, "result", None)
+                msg = getattr(res, "message", None) if res is not None else "Control triggered"
+            if _action_is_deny(action):
+                raise ControlViolationError(
+                    control_id=cid, control_name=name, message=msg or "Control triggered"
+                )
+        # Steer (non-deny) — treat as block for this lab gate.
+        if matches:
+            m0 = matches[0]
+            name = getattr(m0, "control_name", None) or (
+                m0.get("control_name") if isinstance(m0, dict) else "unknown"
+            )
+            raise ControlSteerError(
+                control_id=None, control_name=str(name), message="Control steer"
+            )
+    return draft
 
 def _judge_context_adherence(query: str, context: str, answer: str) -> float:
-    """Real LLM-judge fallback (used only if the Protect API is unreachable).
+    """Real LLM-judge fallback (only if Agent Control API is unavailable).
 
-    This computes the SAME metric the Protect rule thresholds — via a real model
-    call — instead of any phrase/keyword heuristic."""
+    Same metric spirit as Console POST Controls / classic context_adherence floor —
+    via a real model call, never a phrase/keyword heuristic."""
     judge = ChatOpenAI(model=MODEL, temperature=0.0, max_tokens=8)
     prompt = (
         "Rate from 0.0 to 1.0 how fully the RESPONSE is grounded in the CONTEXT. "
@@ -413,60 +717,62 @@ def _judge_context_adherence(query: str, context: str, answer: str) -> float:
         return 1.0  # fail-open with a logged note rather than a fake block
 
 def protect_node(state: SupportState) -> SupportState:
-    """Gate the draft answer through a REAL Galileo Protect stage.
+    """Gate the draft answer through Galileo Agent Control (POST stage).
 
-    Primary path: invoke_protect() against the configured stage + ruleset.
-    
-    BUG FIX (2026-06-16): The previous implementation treated ExecutionStatus.error
-    as 'not_triggered' and returned early, bypassing the real-judge fallback.
-    Root cause: Protect API returns error when the LLM metric service is unreachable
-    (e.g. context_adherence_luna not available on this cluster tier).
-    Fix: Check for ERROR status explicitly and fall through to the real-judge fallback.
-    
-    Galileo 2.3.0 migration note: invoke_protect is deprecated; the production
-    migration path is @agent_control.control() + ControlViolationError (see RB-140).
-    This lab uses invoke_protect as the primary path because no agent-control
-    server is provisioned here; the LLM judge is the real enforcement mechanism.
+    Primary path: agent_control.evaluate_controls(..., stage='post') against Controls
+    bound to log stream `trinity-stack` in Console. Deny → ControlViolationError → block.
+
+    Fallback: real LLM judge at ADHERENCE_FLOOR — only when Control API is unavailable
+    (SDK missing, init failure, or evaluation transport/server error). Not a mock success.
+    Classic invoke_protect / stage `trinity-protect` is deprecated (Protect stages UI 404).
     """
     draft = state.get("draft_answer", "") or ""
     context = "\n".join(state.get("retrieved_docs") or [])
     status = "not_triggered"
     final = draft
 
-    if _PROTECT_AVAILABLE:
-        try:
-            resp = invoke_protect(
-                payload=Payload(input=state["query"], output=draft),
-                prioritized_rulesets=[_protect_ruleset()],
-                project_name=PROJECT,
-                stage_name=PROTECT_STAGE,
-                timeout=10.0,
-                metadata={"lab": "trinity-stack"},
-            )
-            if resp is not None and getattr(resp, "text", None) is not None:
-                resp_status_str = str(getattr(resp, "status", "")).upper()
-                # BUG FIX: only trust the Protect response when it is NOT an error.
-                # ERROR means the metric service is unavailable — fall through to LLM judge.
-                if "ERROR" not in resp_status_str:
-                    final = resp.text
-                    triggered = ("TRIGGERED" in resp_status_str
-                                 and "NOT_TRIGGERED" not in resp_status_str)
-                    status = "triggered" if (triggered or final != draft) else "not_triggered"
-                    return {"final_answer": final, "protect_status": status,
-                            "context_score": state.get("context_score"),
-                            "protect_path": "invoke_protect"}
-                # Else: fall through to LLM judge (protect API metric unavailable)
-        except Exception:
-            pass  # fall through to the real-judge fallback
+    # Ensure init if run_query already created a logger with stream id in env.
+    if _AGENT_CONTROL_SDK_AVAILABLE and os.environ.get("GALILEO_API_KEY"):
+        if not _ac_initialized:
+            ensure_agent_control()
+        if _ac_init_error is None and _ac_initialized:
+            try:
+                evaluate_post_control(
+                    query=state["query"], draft=draft, context=context
+                )
+                return {
+                    "final_answer": draft,
+                    "protect_status": "not_triggered",
+                    "context_score": state.get("context_score"),
+                    "protect_path": "agent_control",
+                }
+            except ControlViolationError:
+                return {
+                    "final_answer": BLOCKED_MESSAGE,
+                    "protect_status": "triggered",
+                    "context_score": state.get("context_score"),
+                    "protect_path": "agent_control",
+                }
+            except ControlSteerError:
+                return {
+                    "final_answer": BLOCKED_MESSAGE,
+                    "protect_status": "triggered",
+                    "context_score": state.get("context_score"),
+                    "protect_path": "agent_control",
+                }
+            except Exception:
+                pass  # Control API unavailable/error → documented LLM-judge fallback
 
-    # Fallback: real judge, same metric, same threshold (NOT a heuristic block-list).
-    # Active in two cases: (a) invoke_protect raised an exception, or (b) Protect
-    # returned ERROR status because the metric service is unavailable on this cluster.
+    # Documented fallback: Control API unavailable — same threshold spirit as Console Control.
     score = _judge_context_adherence(state["query"], context, draft)
     if score < ADHERENCE_FLOOR:
         status, final = "triggered", BLOCKED_MESSAGE
-    return {"final_answer": final, "protect_status": status, "context_score": score,
-            "protect_path": "llm_judge_fallback"}
+    return {
+        "final_answer": final,
+        "protect_status": status,
+        "context_score": score,
+        "protect_path": "llm_judge_fallback",
+    }
 
 def route_by_intent(state: SupportState) -> str:
     return state.get("intent", "general")
@@ -539,13 +845,22 @@ def get_metrics():
 
 # ── Galileo-instrumented run ───────────────────────────────────────────────────
 def run_query(graph, query: str, verbose: bool = True, tag: str = "") -> dict:
+    _normalize_galileo_api_key()
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise RuntimeError(
+            "OPENAI_API_KEY missing — refuse to run (no mock path). "
+            "Copy .env.example → .env or export the key."
+        )
+    if not os.environ.get("GALILEO_API_KEY"):
+        raise RuntimeError(
+            "GALILEO_API_KEY missing — refuse to run (no mock path). "
+            "Set GALILEO_API_KEY (or Galileo_API_Key) / OpenClaw galileo headers."
+        )
+
     logger  = GalileoLogger(project=PROJECT, log_stream=LOG_STREAM)
     cb = GalileoCallback(galileo_logger=logger, start_new_trace=True, flush_on_chain_end=True)
 
-    # galileo 2.3.0: connect Agent Control observability bridge to this logger.
-    # Events from the LangChain callback flow into the bridge and are recorded
-    # alongside traces. This is step 1 of the invoke_protect → Agent Control
-    # migration path (see RB-140 §Fix - Current path for the full migration).
+    # Wire Agent Control → Galileo control spans, then init Controls for this stream.
     _ac_bridge = None
     if _AGENT_CONTROL_BRIDGE_AVAILABLE:
         try:
@@ -553,6 +868,8 @@ def run_query(graph, query: str, verbose: bool = True, tag: str = "") -> dict:
             _ac_bridge.register()
         except Exception:
             pass  # bridge is observability-only; safe to skip if unavailable
+
+    ensure_agent_control(logger)
 
     t0 = time.time()
     result = graph.invoke(
@@ -579,7 +896,8 @@ def run_query(graph, query: str, verbose: bool = True, tag: str = "") -> dict:
         print(f"Intent:   {result.get('intent','?')}  |  Docs: {result.get('doc_ids',[])}"
               f"  |  top-sim: {result.get('context_score')}")
         print(f"Answer:   {(result.get('final_answer') or result.get('draft_answer',''))[:220]}")
-        print(f"Protect:  {protect_icon} {result.get('protect_status','?')}  |  Latency: {latency_ms}ms")
+        print(f"Protect:  {protect_icon} {result.get('protect_status','?')}  "
+              f"|  path: {result.get('protect_path','?')}  |  Latency: {latency_ms}ms")
         print(f"{'─'*65}")
 
     _fleet_heartbeat(query=query, latency_ms=latency_ms, ok=True,
@@ -666,10 +984,13 @@ def run_baseline(graph, tag="baseline"):
     print(f"\n✅ Baseline complete.")
     print(f"   → https://app.galileo.ai  |  Project: {PROJECT}  |  Stream: {LOG_STREAM}")
     print(f"   Metrics: context_adherence, completeness, cites_kb_source")
+    print(f"   Gate: Agent Control POST (`{CONTROL_STEP}`) — classic stage `{PROTECT_STAGE}` deprecated")
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     args = sys.argv[1:]
+    _load_dotenv()
+    _normalize_galileo_api_key()
 
     if "--poison-corpus" in args:
         # XL-2: swap the real corpus for the off-domain index (genuine bad retrieval).
@@ -709,5 +1030,13 @@ if __name__ == "__main__":
         query = " ".join(a for a in args if not a.startswith("--"))
         if query:
             run_query(graph, query)
+        else:
+            print(
+                "Usage: python app.py 'Your question'  |  --batch  |  --preflight  |  "
+                "--poison-corpus  |  --restore-corpus  |  --kb-stats"
+            )
     else:
-        print("Usage: python app.py 'Your question'  |  --batch  |  --poison-corpus  |  --restore-corpus  |  --kb-stats")
+        print(
+            "Usage: python app.py 'Your question'  |  --batch  |  --preflight  |  "
+            "--poison-corpus  |  --restore-corpus  |  --kb-stats"
+        )

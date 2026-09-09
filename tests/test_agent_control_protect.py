@@ -87,13 +87,23 @@ def test_agent_control_url_derivation(monkeypatch):
 
     monkeypatch.delenv("AGENT_CONTROL_URL", raising=False)
     monkeypatch.setenv("GALILEO_API_URL", "https://api.galileo.ai")
-    assert app_mod._agent_control_url() == "https://agent-control.galileo.ai"
+    assert app_mod._agent_control_url() == "https://api.galileo.ai/agent-control"
 
     monkeypatch.setenv("GALILEO_API_URL", "https://api.acme.galileo.ai")
-    assert app_mod._agent_control_url() == "https://agent-control.acme.galileo.ai"
+    assert app_mod._agent_control_url() == "https://api.acme.galileo.ai/agent-control"
+
+    monkeypatch.setenv("GALILEO_API_URL", "https://api.galileo.ai/agent-control")
+    assert app_mod._agent_control_url() == "https://api.galileo.ai/agent-control"
 
     monkeypatch.setenv("AGENT_CONTROL_URL", "https://custom.example/ac/")
     assert app_mod._agent_control_url() == "https://custom.example/ac"
+
+
+def test_agent_control_url_default_constant():
+    import app as app_mod
+
+    assert app_mod.DEFAULT_AGENT_CONTROL_URL == "https://api.galileo.ai/agent-control"
+    assert "agent-control.galileo.ai" not in app_mod.DEFAULT_AGENT_CONTROL_URL
 
 
 def test_protect_node_agent_control_deny(monkeypatch):

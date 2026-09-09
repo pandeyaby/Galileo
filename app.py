@@ -32,6 +32,7 @@ Three layers:
 Usage:
   python app.py --preflight        # offline env / corpus / Controls checklist (no API spend)
   python app.py --preflight-live   # offline + optional live Control probe (flagged)
+  python app.py --demo             # player path: preflight + short baseline + XL-2 + restore
   python app.py "How do I debug a CUDA out-of-memory error during training?"
   python app.py --batch            # real engineering baseline (10 queries)
   python app.py --poison-corpus    # XL-2: swap to an off-domain index (drill)
@@ -114,7 +115,9 @@ KB_FILE          = pathlib.Path(__file__).parent / "knowledge_base.json"
 KB_POISON_FILE   = pathlib.Path(__file__).parent / "knowledge_base_poisoned.json"
 KB_CANONICAL     = pathlib.Path(__file__).parent / "corpus" / "ml_platform_kb.json"
 INDEX_CACHE_DIR  = pathlib.Path(__file__).parent / ".vector_cache"
-DEFAULT_AGENT_CONTROL_URL = "https://agent-control.galileo.ai"
+# Hosted Agent Control lives under the Galileo API host. The legacy hostname
+# agent-control.galileo.ai SSL-mismatches; prefer /agent-control on api.galileo.ai.
+DEFAULT_AGENT_CONTROL_URL = "https://api.galileo.ai/agent-control"
 
 BLOCKED_MESSAGE = (
     "[BLOCKED by Galileo Agent Control] This answer failed the grounding check "
@@ -148,14 +151,19 @@ def _keys_present() -> dict:
     }
 
 def _agent_control_url() -> str:
-    """Resolve Agent Control server URL (docs: agent-control.<env>.galileo.ai)."""
+    """Resolve Agent Control server URL.
+
+    Prefer AGENT_CONTROL_URL. Otherwise append `/agent-control` to GALILEO_API_URL
+    (hosted default). Do not rewrite to agent-control.<host> — that hostname
+    SSL-mismatches on the public Galileo API.
+    """
     explicit = (os.environ.get("AGENT_CONTROL_URL") or "").strip().rstrip("/")
     if explicit:
         return explicit
     api = (os.environ.get("GALILEO_API_URL") or "https://api.galileo.ai").strip().rstrip("/")
-    if "://api." in api:
-        return api.replace("://api.", "://agent-control.", 1)
-    return DEFAULT_AGENT_CONTROL_URL
+    if api.endswith("/agent-control"):
+        return api
+    return f"{api}/agent-control"
 
 def run_preflight(*, live: bool = False) -> int:
     """Offline fail-loud checks. No paid API calls unless live probe is greenlit."""
@@ -250,8 +258,15 @@ def _live_agent_control_probe() -> int:
     print("    If controls=0, create+attach a POST Control in Console before XL-4 expects blocks.")
     return 0
 
-# Cheap path: --preflight / --preflight-live before LangGraph / Galileo / OpenAI imports.
-if __name__ == "__main__" and ("--preflight" in sys.argv[1:] or "--preflight-live" in sys.argv[1:]):
+# Cheap path: --preflight / --preflight-live / --demo before LangGraph / Galileo / OpenAI imports.
+if __name__ == "__main__" and (
+    "--preflight" in sys.argv[1:]
+    or "--preflight-live" in sys.argv[1:]
+    or "--demo" in sys.argv[1:]
+):
+    if "--demo" in sys.argv[1:]:
+        demo = pathlib.Path(__file__).parent / "examples" / "player_demo.py"
+        raise SystemExit(subprocess.call([sys.executable, str(demo)]))
     sys.exit(run_preflight(live="--preflight-live" in sys.argv[1:]))
 
 # ── Imports ───────────────────────────────────────────────────────────────────
@@ -1054,11 +1069,11 @@ if __name__ == "__main__":
             run_query(graph, query)
         else:
             print(
-                "Usage: python app.py 'Your question'  |  --batch  |  --preflight  |  "
+                "Usage: python app.py 'Your question'  |  --batch  |  --demo  |  --preflight  |  "
                 "--poison-corpus  |  --restore-corpus  |  --kb-stats"
             )
     else:
         print(
-            "Usage: python app.py 'Your question'  |  --batch  |  --preflight  |  "
+            "Usage: python app.py 'Your question'  |  --batch  |  --demo  |  --preflight  |  "
             "--poison-corpus  |  --restore-corpus  |  --kb-stats"
         )

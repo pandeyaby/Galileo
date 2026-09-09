@@ -2,6 +2,16 @@
 
 An engineering assistant for ML platform work — training, inference, infra — with retrieval, tools, and an Agent Control gate in the loop.
 
+## For players
+
+1. **Keys stay local:** `cp .env.example .env` and fill in `OPENAI_API_KEY` + `GALILEO_API_KEY`. **Never commit secrets.**
+2. **Run the demo first:** `make demo` (or `python examples/player_demo.py` / `python app.py --demo`) — offline preflight, short baseline, XL-2 poison + restore, Console links, fleet-vs-Galileo summary, cost note.
+3. **Stuck on Galileo?** Use the [troubleshooter](https://pandeyaby.github.io/Galileo/troubleshooter/) (auth, missing traces, metrics, integrations, Protect → Agent Control). Do not rebuild that catalog here.
+
+`AGENT_CONTROL_URL` is pinned to `https://api.galileo.ai/agent-control` in `.env.example` (the `agent-control.galileo.ai` host SSL-mismatches).
+
+---
+
 The interesting part isn’t the happy path. It’s what happens when something quietly goes wrong: bad retrieval, a stuck process, a slow tool, a quality drop that looks like a win in fleet metrics. This repo has drills for those cases, traces you can open in Galileo, and a short runbook next to each one.
 
 Under the hood it’s a small graph of steps (LangGraph or DizzyGraph), process telemetry on the side, and Galileo for trust. Keep the volume low; hit real APIs.
@@ -234,13 +244,22 @@ Required vars are listed in [`.env.example`](.env.example) (names/placeholders o
 cp .env.example .env   # fill in locally — never commit secrets
 export OPENAI_API_KEY="sk-..."       # embeddings + LLM
 export GALILEO_API_KEY="..."          # app.galileo.ai → Settings → API Keys
+# AGENT_CONTROL_URL is pinned in .env.example → https://api.galileo.ai/agent-control
 # Optional alias normalized by app.py: Galileo_API_Key
 # Optional: GALILEO_API_KEY / OPENAI_API_KEY from ~/.openclaw/openclaw.json
 ```
 
 **Create a Galileo project** called `rax-galileo-labs` with a log stream named `trinity-stack` before running — or edit the `PROJECT` and `LOG_STREAM` constants at the top of `app.py`. For XL-4, attach a **POST** Agent Control to that stream (classic Protect stage `trinity-protect` is deprecated — see [Galileo Setup](#galileo-setup)).
 
-Run the **offline** preflight before any live baseline or drill (key presence as booleans, corpus restore path, Agent Control Console checklist — **no OpenAI/Galileo API spend**):
+**Players — one command** (preflight + short baseline + XL-2 + restore; fails loud without keys):
+
+```bash
+make demo
+# or: python examples/player_demo.py
+# or: python app.py --demo
+```
+
+Or run the **offline** preflight alone before any live baseline or drill (key presence as booleans, corpus restore path, Agent Control Console checklist — **no OpenAI/Galileo API spend**):
 
 ```bash
 python app.py --preflight
@@ -466,8 +485,8 @@ Optional keys for integration starters (`GOOGLE_*` / `GEMINI_*` / `AWS_*` / Bedr
 2. Create a project named `rax-galileo-labs` (or edit `PROJECT` in `app.py`)
 3. Create a log stream named `trinity-stack` (or edit `LOG_STREAM`)
 4. For XL-4 / quality gate: open **Controls** → create a **POST** Control (grounding / deny) → **attach it to** log stream `trinity-stack`. Do **not** create classic Protect stage `trinity-protect` (Protect stages UI 404). This repo does not auto-create Controls in the live Console.
-5. Optional: set `AGENT_CONTROL_URL` (default `https://agent-control.galileo.ai`), `AGENT_CONTROL_AGENT_NAME=trinity-stack`. See `.env.example`.
-6. `python app.py --preflight` (offline). Opt-in live probe: `GALILEO_PREFLIGHT_LIVE=1 python app.py --preflight-live` (no Control create).
+5. Set `AGENT_CONTROL_URL=https://api.galileo.ai/agent-control` (pinned in `.env.example`; default in code — do not use `agent-control.galileo.ai`, SSL mismatch). Optional: `AGENT_CONTROL_AGENT_NAME=trinity-stack`.
+6. `python app.py --preflight` (offline). Opt-in live probe: `GALILEO_PREFLIGHT_LIVE=1 python app.py --preflight-live` (no Control create). Players: `make demo`.
 
 ---
 

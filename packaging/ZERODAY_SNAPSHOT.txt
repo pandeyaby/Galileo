@@ -1,0 +1,9 @@
+ZERODAY localization snapshot metadata (packaging only; no application code changes).
+
+repo: pandeyaby/Galileo
+source_sha: b724622bba4138bc27667d9610c92613f8cc357c
+artifact: Galileo-snapshot.tar.gz
+artifact_sha256: 8ac879e6e86f70bcbe82a73f849f75fa092afbec68b4e15d0390c7cf92475c5e
+approx_files: 137
+approx_size: 9.4M (9784795 bytes)
+stripped: node_modules, .git, .next, dist, build, coverage, .turbo, .cache, out
